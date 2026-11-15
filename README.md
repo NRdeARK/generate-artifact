@@ -10,7 +10,7 @@ It ships one skill (`generate-artifact`), HTML templates, a swappable theme (Ant
 ## Install
 
 ```
-claude plugin marketplace add <owner>/generate-artifact
+claude plugin marketplace add NRdeARK/generate-artifact
 claude plugin install generate-artifact@generate-artifact
 ```
 

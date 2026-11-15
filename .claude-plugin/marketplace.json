@@ -4,7 +4,8 @@
     "description": "Intent + solution artifacts for project work: templates, theme, EN/TH i18n and a traceability-checking sync script."
   },
   "owner": {
-    "name": "generate-artifact"
+    "name": "NRdeARK",
+    "url": "https://github.com/NRdeARK"
   },
   "plugins": [
     {

@@ -10,7 +10,7 @@
      }},
     {"id": "CMP-API", "name": "API", "c4_level": "L2", "status": "unchanged"},
     {"id": "CMP-API-READ", "name": "Status read handler", "c4_level": "L3", "status": "unchanged"},
-    {"id": "CMP-DB", "name": "Projects DB", "c4_level": "L2", "status": "changed",
+    {"id": "CMP-DB", "name": "Projects DB", "kind": "db", "c4_level": "L2", "status": "changed",
      "change": {
        "what": "Adds a status timestamp and an append-only status history table.",
        "why": "Freshness needs a timestamp, and keeping history replaces the manual spreadsheet record.",

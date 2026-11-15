@@ -188,7 +188,7 @@ def content_entries(project):
     for items in sources:
         for item in items:
             text = flatten_text({k: v for k, v in item.items() if k != "id"})
-            if item.get("id") and text:
+            if isinstance(item.get("id"), str) and text:
                 entries[item["id"]] = text
     return entries
 
@@ -230,16 +230,26 @@ ID_PATTERNS = {
     "outcome": r"O\d+",
 }
 CHANGING = ("changed", "new", "removed")
-ARTIFACT_HOSTS = ("claude.ai",)
+STORE_KINDS = ("db", "store")
+ARTIFACT_AUTHORITY = "claude.ai"
 
 
 def safe_url(url):
-    """True only for https URLs on an artifact host. Anything else is never linked."""
-    if not isinstance(url, str):
+    """True only for https://claude.ai/... URLs. Rejects anything that parsers could read differently:
+    backslashes, control characters, surrounding spaces, credentials, ports, other hosts. Never raises."""
+    if not isinstance(url, str) or url != url.strip() or "\\" in url or any(ord(c) < 32 or ord(c) == 127 for c in url):
         return False
-    parts = urlparse(url)
-    host = parts.hostname or ""
-    return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in ARTIFACT_HOSTS)
+    try:
+        parts = urlparse(url)
+        parts.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        return False
+    return parts.scheme == "https" and parts.netloc == ARTIFACT_AUTHORITY
+
+
+def reason_text(value):
+    """A waiver reason must be a non-blank string (not true, a list, or spaces)."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 def resolve_diagram(root, rel):
@@ -252,10 +262,15 @@ def resolve_diagram(root, rel):
     return path, None
 
 
+def string_ids(items):
+    """The IDs that are strings. Other IDs are reported by check_ids and never used as keys."""
+    return {i["id"]: i for i in items if isinstance(i.get("id"), str)}
+
+
 def _unknown(file, where, refs, known, kind):
     return [Finding("error", "unknown-id", f"{file} {where}",
                     f"{kind} '{ref}' is not defined. Add it to its source file or fix the ID.")
-            for ref in refs or [] if ref not in known]
+            for ref in refs or [] if not isinstance(ref, str) or ref not in known]
 
 
 def check_ids(file, items, kind):
@@ -263,21 +278,22 @@ def check_ids(file, items, kind):
     out, seen = [], set()
     for index, item in enumerate(items, start=1):
         ident, where = item.get("id"), f"{file} item {index}"
-        if not ident:
+        if ident in (None, ""):
             out.append(Finding("error", "missing-id", where, f"{kind} has no id. Give it a stable ID."))
         elif not isinstance(ident, str) or not re.fullmatch(ID_PATTERNS[kind], ident):
             out.append(Finding("error", "bad-id", where, f"{kind} id {ident!r} must match {ID_PATTERNS[kind]}."))
         elif ident in seen:
             out.append(Finding("error", "duplicate-id", f"{file} {ident}", "ID used twice. IDs must be unique."))
-        seen.add(ident)
+        if isinstance(ident, str):
+            seen.add(ident)
     return out
 
 
 def known_ids(project):
     return {
-        "component": {c.get("id") for c in project.components},
-        "uc": {u.get("id") for u in project.ucs},
-        "decision": {d.get("id") for d in project.decision_list},
+        "component": set(string_ids(project.components)),
+        "uc": set(string_ids(project.ucs)),
+        "decision": set(string_ids(project.decision_list)),
     }
 
 
@@ -293,7 +309,7 @@ def check_registry(project):
                                f"status '{comp.get('status')}' must be one of {', '.join(CHANGE_STATUSES)}."))
         if comp.get("status") in CHANGING:
             change = comp.get("change") or {}
-            waive = change.get("waive") or {}
+            waive = change.get("waive") if isinstance(change.get("waive"), dict) else {}
             if not change.get("why"):
                 out.append(Finding("error", "change-no-reason", f"registry.json {cid}",
                                    "component is changing but change.why is empty. Say why it changes."))
@@ -301,18 +317,26 @@ def check_registry(project):
                 out.append(Finding("error", "change-no-uc", f"registry.json {cid}",
                                    "component change is linked to no UC. Add change.ucs."))
             for field, code in (("decisions", "change-no-decision"), ("files", "change-no-files")):
-                if not change.get(field) and not waive.get(field):
+                if not change.get(field) and not reason_text(waive.get(field)):
                     out.append(Finding("error", code, f"registry.json {cid}",
-                                       f"component change has no {field}. Add change.{field} or a reason in change.waive.{field}."))
+                                       f"component change has no {field}. Add change.{field} or a non-blank text reason in change.waive.{field}."))
             out += _unknown("registry.json", cid, change.get("ucs"), known["uc"], "UC")
             out += _unknown("registry.json", cid, change.get("decisions"), known["decision"], "decision")
     return out
 
 
+def required_entities(project):
+    """Entities the CRUD matrix must cover: stored components (L2 db/store) plus every entity a UC names."""
+    names = [c.get("name") for c in project.components if c.get("c4_level") == "L2" and c.get("kind") in STORE_KINDS]
+    for uc in project.ucs:
+        names += uc.get("entities") or []
+    return list(dict.fromkeys(n for n in names if isinstance(n, str) and n.strip()))
+
+
 def check_usecases(project):
     known, out = known_ids(project), check_ids("usecases.json", project.ucs, "uc")
     out += check_ids("usecases.json outcomes", project.usecases["outcomes"], "outcome")
-    registry = {c.get("id"): c for c in project.components}
+    registry = string_ids(project.components)
     outcome_ucs = {uc for o in project.usecases["outcomes"] for uc in o.get("ucs") or []}
     for uc in project.ucs:
         uid = uc.get("id", "?")
@@ -323,14 +347,14 @@ def check_usecases(project):
             out.append(Finding("error", "orphan-uc", where, "UC is linked to no component. Add components[]."))
         out += _unknown("usecases.json", uid, uc.get("components"), known["component"], "component")
         if uc.get("tier") == "Affected":
-            cause = registry.get(uc.get("caused_by"))
+            cause = registry.get(uc.get("caused_by")) if isinstance(uc.get("caused_by"), str) else None
             if cause is None:
                 out.append(Finding("error", "affected-no-cause", where,
                                    "Affected UC must name the changed component in caused_by (a registry ID)."))
             elif cause.get("status") not in CHANGING:
                 out.append(Finding("error", "affected-bad-cause", where,
                                    f"caused_by {uc.get('caused_by')} is {cause.get('status')}. An Affected UC needs a changed, new or removed component."))
-        elif uid not in outcome_ucs:
+        elif isinstance(uid, str) and uid not in outcome_ucs:
             out.append(Finding("warning", "uc-no-outcome", where, "Main UC is not listed under any outcome."))
         flows = uc.get("flows") or []
         for flow in flows:
@@ -344,9 +368,15 @@ def check_usecases(project):
     for outcome in project.usecases["outcomes"]:
         out += _unknown("usecases.json", outcome.get("id", "outcome"), outcome.get("ucs"), known["uc"], "UC")
     crud = project.usecases["crud"]
-    if project.ucs and not crud and not project.usecases.get("crud_waiver"):
+    waived = reason_text(project.usecases.get("crud_waiver"))
+    if project.ucs and not crud and not waived:
         out.append(Finding("error", "crud-missing", "usecases.json crud",
-                           "no CRUD rows. List each entity with its create/read/update/delete UC, or explain in crud_waiver why none are stored."))
+                           "no CRUD rows. List each entity with its create/read/update/delete UC, or give a non-blank text reason in crud_waiver."))
+    if not waived:
+        rows = {str(r.get("entity", "")).strip().lower() for r in crud}
+        out += [Finding("error", "crud-missing-entity", f"usecases.json crud {name}",
+                        "no CRUD row for this entity. Add a row, or explain in crud_waiver why none are stored.")
+                for name in required_entities(project) if name.strip().lower() not in rows]
     for row in crud:
         if not row.get("entity"):
             out.append(Finding("error", "crud-no-entity", "usecases.json crud", "CRUD row has no entity name."))
@@ -406,7 +436,7 @@ def check_concepts(project):
 
 def check_artifacts(project):
     return [Finding("error", "bad-url", f"artifacts.json tabs.{tab}",
-                    f"url {entry.get('url')!r} must be an https URL on {', '.join(ARTIFACT_HOSTS)}. It will not be linked.")
+                    f"url {entry.get('url')!r} must be https://{ARTIFACT_AUTHORITY}/... exactly (no credentials, backslashes or ports). It will not be linked.")
             for tab, entry in project.artifacts["tabs"].items()
             if isinstance(entry, dict) and entry.get("url") and not safe_url(entry["url"])]
 
@@ -544,8 +574,8 @@ class Site:
             self.entries = content_entries(project)
         except (TypeError, AttributeError) as exc:
             raise DataError(f"project data has an unexpected shape ({exc}). Run validate to find the field.") from exc
-        self.reg = {c.get("id"): c for c in project.components}
-        self.ucs = {u.get("id"): u for u in project.ucs}
+        self.reg = string_ids(project.components)
+        self.ucs = string_ids(project.ucs)
         self.parts = {}
         self._load_parts("_parts.html")
 

@@ -307,6 +307,76 @@ class ReviewRegressionTests(FixtureCase):
         self.assertEqual(run("export-pdf", str(self.dir), "--theme", "no-such-theme", "--dry-run")[0], 2)
 
 
+class SecondReviewRegressionTests(FixtureCase):
+    """One test per item in REVIEW_CODEX_2.md (N1-N3, F3 partial, F5 partial), using the report's payloads."""
+
+    def set_url(self, url):
+        self.edit("artifacts.json", lambda d: d["tabs"]["tab2"].update(url=url))
+
+    def test_n1_backslash_authority_bypass_is_rejected(self):
+        self.set_url("https://evil.example\\@claude.ai/a")
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-url", codes)
+        run("render", str(self.dir), "--tabs", "intent")
+        self.assertNotIn("evil.example", (self.dir / "build" / "intent.html").read_text(encoding="utf-8"))
+
+    def test_n1_other_url_forms_are_rejected(self):
+        for url in ("https://user:pw@claude.ai/a", "https://claude.ai:8443/a", "https://claude.ai\t/a",
+                    " https://claude.ai/a", "https://sub.claude.ai/a", "http://claude.ai/a", "https://CLAUDE.ai.evil.example/a"):
+            with self.subTest(url=url):
+                self.assertFalse(sync.safe_url(url))
+        self.assertTrue(sync.safe_url("https://claude.ai/artifact/abc"))
+
+    def test_n2_malformed_ipv6_url_reports_bad_url_instead_of_crashing(self):
+        self.set_url("https://[invalid")
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-url", codes)
+        self.assertEqual(run("render", str(self.dir), "--tabs", "intent")[0], 0)
+
+    def test_n3_waiver_reasons_must_be_nonblank_text(self):
+        for bad in (True, ["x"], {"a": 1}, "   ", 1):
+            with self.subTest(waiver=bad):
+                self.setUp()
+
+                def change(d, bad=bad):
+                    agg = next(c for c in d["components"] if c["id"] == "CMP-AGG")
+                    agg["change"].update(files=[], decisions=[], waive={"files": bad, "decisions": bad})
+                self.edit("registry.json", change)
+                self.assertTrue({"change-no-files", "change-no-decision"} <= self.codes()[1])
+
+    def test_n3_crud_waiver_must_be_nonblank_text(self):
+        for bad in (True, "  ", ["x"]):
+            with self.subTest(waiver=bad):
+                self.setUp()
+                self.edit("usecases.json", lambda d, bad=bad: d.update(crud=[], crud_waiver=bad))
+                self.assertIn("crud-missing", self.codes()[1])
+        self.setUp()
+        self.edit("usecases.json", lambda d: d.update(crud=[], crud_waiver="nothing is stored"))
+        self.assertEqual(self.codes()[0], 0)
+
+    def test_f3_missing_crud_row_for_a_stored_entity_is_an_error(self):
+        self.edit("usecases.json", lambda d: d.update(crud=d["crud"][:2]))  # drops the Weekly report row
+        code, codes, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("crud-missing-entity", codes)
+        self.assertIn("Weekly report", out)
+
+    def test_f3_stored_component_needs_a_row(self):
+        self.edit("usecases.json", lambda d: d.update(crud=[r for r in d["crud"] if r["entity"] != "Projects DB"]))
+        out = self.codes()[2]
+        self.assertIn("crud-missing-entity", out)
+        self.assertIn("Projects DB", out)
+
+    def test_f5_non_string_id_does_not_crash_renderer_construction(self):
+        self.edit("usecases.json", lambda d: d["ucs"][0].update(id=[]))
+        self.assertIn("bad-id", self.codes()[1])
+        self.assertIn(run("render", str(self.dir))[0], (0, 1))
+        self.assertIn(run("export-pdf", str(self.dir), "--dry-run")[0], (0, 1))
+        self.assertIn(run("i18n-diff", str(self.dir))[0], (0, 1))
+
+
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):
         offenders = []

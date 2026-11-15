@@ -55,7 +55,22 @@ details.card > summary { list-style-position: inside; }
 
 /* diagrams */
 .diagram { margin: 8px 0; text-align: center; }
-.diagram img { max-width: 100%; height: auto; }
+.diagram-frame { position: relative; display: inline-block; max-width: 100%; }
+.diagram img { max-width: 100%; height: auto; cursor: zoom-in; }
+.expand { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; opacity: 0.85; }
+.expand:hover, .expand:focus-visible { opacity: 1; background: var(--tab-hover-bg); }
+.expand:focus-visible, .viewer-tools button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* diagram viewer overlay (built into the page: works in a sandboxed frame) */
+.viewer { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: var(--viewer-bg); color: var(--viewer-fg); }
+.viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; }
+.viewer-caption { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-tools { display: flex; gap: 6px; flex: none; }
+.viewer-tools button { min-width: 36px; height: 32px; padding: 0 10px; border: 1px solid var(--viewer-btn-bd); border-radius: 6px; background: var(--viewer-btn-bg); color: var(--viewer-fg); font: inherit; cursor: pointer; }
+.viewer-stage { position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: grab; user-select: none; }
+.viewer-stage.grabbing { cursor: grabbing; }
+.viewer-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; user-select: none; -webkit-user-drag: none; }
+html.viewer-open { overflow: hidden; }
 .diagram.missing { border: 1px dashed var(--fg-muted); border-radius: 6px; background: var(--surface-alt); color: var(--fg-muted); padding: 24px 12px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
 
 /* status vocabulary: unchanged / changed / new / removed / deferred (+ decision states) */
@@ -101,14 +116,15 @@ details.card > summary { list-style-position: inside; }
 .blk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: center; }
 .blk .tx { display: flex; flex-direction: column; gap: 6px; }
 .blk h2 { font-size: 20px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { border: 1px solid var(--border); padding: 4px 8px; border-radius: 4px; background: var(--surface); font-size: 12px; }
 
 /* tab 4 */
 .split { display: flex; gap: 0; align-items: flex-start; }
-.side { width: 220px; flex: none; position: sticky; top: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 4px; }
+.side { width: 220px; flex: none; position: sticky; top: calc(var(--header-h, 0px) + 12px); max-height: calc(100vh - var(--header-h, 0px) - 24px); overflow-y: auto; border-right: 1px solid var(--border); background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 4px; }
 .side a { text-decoration: none; color: var(--fg); padding: 4px 6px; border-radius: 4px; }
-.side a:hover { background: var(--surface-alt); }
+.side a:hover, .side a.active { background: var(--surface-alt); }
+.side a.active { font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.side-kind { display: block; font-size: 11px; font-weight: 400; color: var(--fg-muted); }
+.uc, .blk { scroll-margin-top: calc(var(--header-h, 0px) + 12px); }
 .main-col { flex: 1; min-width: 0; padding-left: 24px; display: flex; flex-direction: column; gap: 32px; }
 .uc { display: flex; flex-direction: column; gap: 14px; }
 .uc h2 { font-size: 22px; }
@@ -138,7 +154,8 @@ details.card > summary { list-style-position: inside; }
 body.print .toggles, body.print .lang, body.print .level-btns { display: none; }
 body.print .side { display: none; }
 body.print .main-col { padding-left: 0; }
-@media print { body { background: var(--surface); } .card { box-shadow: none; break-inside: avoid; } }
+@media print { body { background: var(--surface); } .card { box-shadow: none; break-inside: avoid; } .expand, .viewer { display: none !important; } }
+body.print .expand, body.print .viewer { display: none; }
 @media (max-width: 760px) {
   .blk, .grid3 { grid-template-columns: 1fr; }
   .split { flex-direction: column; }

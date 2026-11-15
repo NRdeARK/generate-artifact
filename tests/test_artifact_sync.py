@@ -147,7 +147,8 @@ class RenderTests(FixtureCase):
 
     def test_tab2_has_no_choose_buttons_and_decided_is_collapsed(self):
         text = self.build()["tab2.html"]
-        self.assertNotIn("<button", text.split("</header>")[1])
+        content = text.split("<main>")[1].split("</main>")[0]
+        self.assertEqual(re.findall(r'<button(?![^>]*class="expand")', content), [])  # only diagram expand buttons
         self.assertRegex(text, r'<details class="card decision " id="D1" >')
         self.assertRegex(text, r'<details class="card decision open-state" id="D3" open>')
 
@@ -532,6 +533,145 @@ class TabBarTests(FixtureCase):
             self.assertIn(token + ":", (SKILL / "themes" / "anthropic.css").read_text(encoding="utf-8"))
         self.assertIn("a.tab:hover", css)
         self.assertIn(".tab:focus-visible", css)
+
+
+class DiagramViewerTests(FixtureCase):
+    def pages(self):
+        run("render", str(self.dir))
+        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+
+    def test_every_diagram_has_a_real_expand_button(self):
+        for name, text in self.pages().items():
+            figures = text.count('<figure class="diagram">')
+            buttons = re.findall(r'<button type="button" class="expand" aria-label="Expand diagram[^"]*">', text)
+            with self.subTest(page=name):
+                self.assertEqual(len(buttons), figures)
+                self.assertIn("cursor: zoom-in", (SKILL / "templates" / "base.css").read_text(encoding="utf-8"))
+        self.assertGreater(sum(t.count('class="expand"') for t in self.pages().values()), 20)
+
+    def test_diagrams_in_hidden_alt_sections_and_details_are_covered(self):
+        tab4 = self.pages()["tab4"]
+        alt = re.search(r'<div class="alt bad" data-group="UC-01-bad" hidden>.*?</figure>', tab4, re.S).group(0)
+        self.assertIn('class="expand"', alt)
+        detail = re.search(r"<details class=\"card\" ><summary>[^<]*<span[^>]*>Detail.*?</details>", tab4, re.S)
+        self.assertIsNotNone(detail)
+        self.assertIn('class="expand"', detail.group(0))
+
+    def test_overlay_markup_is_in_every_page_with_all_controls(self):
+        for name, text in self.pages().items():
+            with self.subTest(page=name):
+                self.assertRegex(text, r'<div class="viewer" id="viewer" role="dialog" aria-modal="true"[^>]*hidden>')
+                for control in ("in", "out", "reset", "close"):
+                    self.assertIn(f'data-viewer="{control}"', text)
+
+    def test_viewer_script_handles_keyboard_wheel_pointer_focus_and_avoids_popups(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        for needle in ("Escape", "wheel", "pointerdown", "pointermove", "lastTrigger.focus()", "viewer-stage"):
+            self.assertIn(needle, js)
+        self.assertNotIn("window.open", js)
+        self.assertNotRegex(js, r"(?<!try \{ )requestFullscreen\(")
+
+    def test_print_css_hides_the_viewer_and_print_export_has_no_buttons(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        print_block = css.split("@media print")[1].split("@media (max-width")[0]
+        self.assertIn(".expand", print_block)
+        self.assertIn(".viewer", print_block)
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(sync.present_tabs(self.dir))
+        self.assertNotIn('class="expand"', document)
+        self.assertNotIn('id="viewer"', document)
+
+    def test_viewer_uses_theme_tokens_only(self):
+        theme = (SKILL / "themes" / "anthropic.css").read_text(encoding="utf-8")
+        for token in ("--viewer-bg", "--viewer-fg", "--viewer-btn-bg"):
+            self.assertIn(token + ":", theme)
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_open_zoom_pan_close_and_focus_return(self):
+        page = self.pages()["tab3"]
+        probe = """<script>window.addEventListener('load',function(){
+var out=[],btn=document.querySelector('.expand'),v=document.getElementById('viewer'),stage=document.getElementById('viewer-stage'),img=v.querySelector('img');
+btn.focus(); btn.click();
+setTimeout(function(){
+ out.push('open='+(!v.hidden));
+ var t0=img.style.transform;
+ document.querySelector('[data-viewer=in]').click(); var t1=img.style.transform;
+ out.push('zoomed='+(t1!==t0));
+ stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-200,clientX:300,clientY:300,bubbles:true,cancelable:true})); out.push('wheel='+(img.style.transform!==t1));
+ document.querySelector('[data-viewer=reset]').click(); out.push('reset='+(img.style.transform===t0));
+ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+ out.push('closed='+v.hidden); out.push('focus='+(document.activeElement===btn));
+ btn.click(); stage.dispatchEvent(new MouseEvent('click',{bubbles:true})); out.push('backdrop='+v.hidden);
+ document.body.insertAdjacentHTML('afterbegin','<pre id=res>'+out.join(';')+'</pre>');
+},400);});</script></body>"""
+        target = self.dir / "build" / "probe.html"
+        target.write_text(page.replace("</body>", probe), encoding="utf-8")
+        import subprocess
+        done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--window-size=1200,900", "--virtual-time-budget=4000", "--dump-dom", target.resolve().as_uri()],
+                              capture_output=True, text=True, encoding="utf-8", timeout=90)
+        result = re.search(r'<pre id="res">([^<]*)</pre>', done.stdout)
+        self.assertIsNotNone(result, done.stderr[-300:])
+        self.assertEqual(result.group(1), "open=true;zoomed=true;wheel=true;reset=true;closed=true;focus=true;backdrop=true")
+
+
+class ConceptIndexTests(FixtureCase):
+    def page(self):
+        run("render", str(self.dir), "--tabs", "tab3")
+        return (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+
+    def test_chips_replaced_by_a_side_index_with_id_title_and_kind(self):
+        text = self.page()
+        self.assertNotIn('class="chips"', text)
+        self.assertNotIn('class="chip"', text)
+        side = text.split('<aside class="side"')[1].split("</aside>")[0]
+        for ident, title, kind in (("C1", "Event-driven status", "new pattern"), ("C2", "Aggregator", "new component"), ("C3", "Status history", "behavior change")):
+            self.assertIn(f'href="#{ident}"', side)
+            self.assertIn(title, side)
+            self.assertIn(kind, side)
+        self.assertEqual(re.findall(r'href="#(C\d)"', side), ["C1", "C2", "C3"])
+
+    def test_concept_blocks_live_in_the_main_column(self):
+        text = self.page()
+        self.assertRegex(text, r'<div class="split">\s*<aside class="side"')
+        main_col = text.split('<div class="main-col">')[1]
+        self.assertEqual(re.findall(r'<article class="card blk" id="(C\d)"', main_col), ["C1", "C2", "C3"])
+
+    def test_scrollspy_script_uses_intersection_observer_with_a_scroll_fallback(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        self.assertIn("IntersectionObserver", js)
+        self.assertIn('"scroll"', js)
+        self.assertIn("aria-current", js)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertIn(".side a.active", css)
+        self.assertIn("scroll-margin-top", css)
+
+    def test_tab4_sidebar_gets_the_same_highlight_and_stacks_on_phones(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        phone = css.split("@media (max-width: 760px)")[1]
+        self.assertIn(".split { flex-direction: column; }", phone)
+        self.assertIn("position: static", phone)
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_scrollspy_marks_the_concept_in_view(self):
+        page = self.page()
+        probe = """<script>window.addEventListener('load',function(){
+var first=document.querySelector('.side a.active'); var out=['first='+(first?first.getAttribute('href'):'none')];
+window.scrollTo(0,1000000);
+var tries=0;
+(function wait(){var a=document.querySelector('.side a.active');
+ if((a&&a.getAttribute('href')==='#C3')||++tries>40){
+  out.push('last='+(a?a.getAttribute('href'):'none')); out.push('current='+(a&&a.getAttribute('aria-current')));
+  document.body.insertAdjacentHTML('afterbegin','<pre id=res>'+out.join(';')+'</pre>');
+ } else { setTimeout(wait,100); }})();
+});</script></body>"""
+        target = self.dir / "build" / "probe3.html"
+        target.write_text(page.replace("</body>", probe), encoding="utf-8")
+        import subprocess
+        done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--window-size=1200,420", "--virtual-time-budget=4000", "--dump-dom", target.resolve().as_uri()],
+                              capture_output=True, text=True, encoding="utf-8", timeout=90)
+        result = re.search(r'<pre id="res">([^<]*)</pre>', done.stdout)
+        self.assertIsNotNone(result, done.stderr[-300:])
+        self.assertEqual(result.group(1), "first=#C1;last=#C3;current=true")
 
 
 class TemplateHygieneTests(unittest.TestCase):

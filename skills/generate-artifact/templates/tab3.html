@@ -1,11 +1,17 @@
-<section>
-  <div class="lbl">{{ui:t3.intro}}</div>
-  <p class="muted">{{ui:t3.intro_sub}}</p>
-  <div class="chips">{{chips}}</div>
-</section>
-{{blocks}}
-<!--part:chip-->
-<a class="chip" href="#{{id}}">{{id}} {{title}}</a>
+<div class="split">
+  <aside class="side">
+    <span class="lbl">{{ui:t3.index}}</span>{{side}}
+  </aside>
+  <div class="main-col">
+    <section>
+      <div class="lbl">{{ui:t3.intro}}</div>
+      <p class="muted">{{ui:t3.intro_sub}}</p>
+    </section>
+    {{blocks}}
+  </div>
+</div>
+<!--part:side_concept-->
+<a href="#{{id}}"><strong>{{id}}</strong> {{title}}<span class="side-kind">{{label}}</span></a>
 <!--/part-->
 <!--part:concept-->
 <article class="card blk" id="{{id}}">

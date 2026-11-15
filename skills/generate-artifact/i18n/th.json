@@ -119,5 +119,11 @@
   "col.details": "รายละเอียด",
   "t1.via": "ผ่าน",
   "t1.outcome_ref": "ผลลัพธ์",
-  "t1.open": "เปิดในแท็บ 4"
+  "t1.open": "เปิดในแท็บ 4",
+  "diagram.expand": "ขยายไดอะแกรม",
+  "viewer.zoom_in": "ซูมเข้า",
+  "viewer.zoom_out": "ซูมออก",
+  "viewer.fit": "พอดีจอ",
+  "viewer.close": "ปิด",
+  "t3.index": "แนวคิด"
 }

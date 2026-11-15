@@ -697,7 +697,8 @@ class Site:
         if problem or not path.is_file():
             return self.part("diagram_missing", file=esc(rel))
         data = base64.b64encode(path.read_bytes()).decode("ascii")
-        return self.part("diagram", src=f"data:image/svg+xml;base64,{data}", alt=esc(alt))
+        expand = "" if self.print_mode else self.part("expand_button", label=esc(self.ui_plain("diagram.expand"), quote=True))
+        return self.part("diagram", src=f"data:image/svg+xml;base64,{data}", alt=esc(alt), expand=expand)
 
     def changelog(self, ident=None, wrap=True):
         rows = git_log(self.p.root, ident)
@@ -810,14 +811,15 @@ class Site:
 
     def build_tab3(self):
         concepts = self.p.concept_list
-        chips = "".join(self.part("chip", id=esc(c.get("id", "")), title=self.tx(c.get("id"), "title")) for c in concepts)
+        side = "".join(self.part("side_concept", id=esc(c.get("id", "")), title=self.tx(c.get("id"), "title"), label=self.tx(c.get("id"), "label"))
+                       for c in concepts)
         blocks = "".join(self.part(
             "concept", id=esc(c.get("id", "")), label=self.tx(c.get("id"), "label"), title=self.tx(c.get("id"), "title"),
             diagram=self.diagram(c.get("diagram"), c.get("id", "")), summary=self.tx_block(c.get("id"), "summary"),
             terms=self.part("terms", text=self.tx(c.get("id"), "terms")) if c.get("terms") else "",
             related=", ".join(filter(None, [self.refs(c.get("decisions")), self.refs(c.get("ucs")), self.refs(c.get("components"))])))
             for c in concepts)
-        return dict(chips=chips, blocks=blocks), ""
+        return dict(side=side, blocks=blocks), ""
 
     def build_tab4(self):
         ucs = self.p.ucs
@@ -876,11 +878,12 @@ class Site:
         title, header_extra, content = self.content(tab)
         label = self.ui("page.intent" if tab == "intent" else "page.solution")
         nav_intent, nav_solution = self.nav(tab)
+        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close")}
         return self.fill(
             self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),
             body_class="", project=esc(self.p.name), page_label=label, header_extra=header_extra, nav_intent=nav_intent, nav_solution=nav_solution,
-            content=content, updated=self.updated())
+            content=content, updated=self.updated(), **labels)
 
     def print_document(self, tabs):
         template = self.template("print.html")

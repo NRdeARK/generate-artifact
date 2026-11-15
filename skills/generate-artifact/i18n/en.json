@@ -119,5 +119,11 @@
   "col.details": "Details",
   "t1.via": "via",
   "t1.outcome_ref": "Outcome",
-  "t1.open": "Open in Tab 4"
+  "t1.open": "Open in Tab 4",
+  "diagram.expand": "Expand diagram",
+  "viewer.zoom_in": "Zoom in",
+  "viewer.zoom_out": "Zoom out",
+  "viewer.fit": "Fit",
+  "viewer.close": "Close",
+  "t3.index": "Concepts"
 }

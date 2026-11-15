@@ -9,7 +9,10 @@
 <!--/part-->
 
 <!--part:diagram-->
-<figure class="diagram"><img src="{{src}}" alt="{{alt}}"></figure>
+<figure class="diagram"><span class="diagram-frame"><img src="{{src}}" alt="{{alt}}">{{expand}}</span></figure>
+<!--/part-->
+<!--part:expand_button-->
+<button type="button" class="expand" aria-label="{{label}}"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
 <!--/part-->
 <!--part:diagram_missing-->
 <div class="diagram missing"><strong>{{ui:diagram.missing}}</strong><code>{{file}}</code></div>

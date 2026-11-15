@@ -26,6 +26,12 @@
   --tab-disabled-fg: #8A8880;
   --focus-ring: #1F6FA8;
 
+  /* diagram viewer */
+  --viewer-bg: rgba(20, 20, 19, 0.94);
+  --viewer-fg: #FAF9F5;
+  --viewer-btn-bg: #3D3D3A;
+  --viewer-btn-bd: #5E5D59;
+
   /* type: Latin face first, Thai face as fallback so both scripts render */
   --font-display: "Source Serif 4", "Noto Serif Thai", Georgia, "Times New Roman", serif;
   --font-body: "Inter", "IBM Plex Sans Thai", "Noto Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;

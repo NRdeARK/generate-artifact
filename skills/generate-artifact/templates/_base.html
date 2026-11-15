@@ -20,5 +20,17 @@
 {{content}}
 </main>
 <footer>{{ui:footer.updated}} {{updated}}</footer>
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-caption" hidden>
+  <div class="viewer-bar">
+    <span class="viewer-caption" id="viewer-caption"></span>
+    <div class="viewer-tools">
+      <button type="button" data-viewer="out" aria-label="{{label_zoom_out}}">&minus;</button>
+      <button type="button" data-viewer="reset" aria-label="{{label_fit}}">{{ui:viewer.fit}}</button>
+      <button type="button" data-viewer="in" aria-label="{{label_zoom_in}}">+</button>
+      <button type="button" data-viewer="close" aria-label="{{label_close}}">&times;</button>
+    </div>
+  </div>
+  <div class="viewer-stage" id="viewer-stage"><img class="viewer-img" alt=""></div>
+</div>
 </body>
 </html>

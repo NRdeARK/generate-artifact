@@ -1,0 +1,39 @@
+<div class="grid2">
+  <section class="card"><div class="lbl">{{ui:t1.recap}}</div>{{recap}}</section>
+  <section class="card"><div class="lbl">{{ui:t1.issues}}</div>{{issues}}</section>
+</div>
+<section class="card">
+  <div class="lbl">{{ui:t1.outcomes}}</div>
+  {{outcomes}}
+  <div class="lbl">{{ui:t1.affected_heading}}</div>
+  {{affected}}
+</section>
+<div class="grid2">
+  <section class="card">
+    <div class="lbl">{{ui:t1.impact}}</div>
+    <table><tr><th>{{ui:col.component}}</th><th>{{ui:col.change}}</th><th>{{ui:col.affected_uc}}</th></tr>{{impact_rows}}</table>
+  </section>
+  <section class="card">
+    <div class="lbl">{{ui:t1.crud}}</div>
+    <table><tr><th>{{ui:col.entity}}</th><th>{{ui:crud.create}}</th><th>{{ui:crud.read}}</th><th>{{ui:crud.update}}</th><th>{{ui:crud.delete}}</th></tr>{{crud_rows}}</table>
+  </section>
+</div>
+{{overview}}
+<!--part:outcome-->
+<div class="outcome"><div class="box">{{text}}</div><span>→</span><div>{{ucs}}</div></div>
+<!--/part-->
+<!--part:uc_line-->
+<div class="uc-line {{tier_class}}"><span class="pill">{{tier_label}}</span><strong>{{id}}</strong> {{title}} {{because}}</div>
+<!--/part-->
+<!--part:because-->
+<em>{{ui:t1.because}} {{component}}</em>
+<!--/part-->
+<!--part:impact_row-->
+<tr><td>{{component}} <span class="muted">({{level}})</span></td><td>{{change}}</td><td>{{ucs}}</td></tr>
+<!--/part-->
+<!--part:crud_row-->
+<tr><td>{{entity}}</td>{{cells}}</tr>
+<!--/part-->
+<!--part:crud_cell-->
+<td class="{{cls}}">{{value}}</td>
+<!--/part-->

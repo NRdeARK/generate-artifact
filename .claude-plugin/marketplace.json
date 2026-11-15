@@ -1,0 +1,15 @@
+{
+  "name": "generate-artifact",
+  "metadata": {
+    "description": "Intent + solution artifacts for project work: templates, theme, EN/TH i18n and a traceability-checking sync script."
+  },
+  "owner": {
+    "name": "generate-artifact"
+  },
+  "plugins": [
+    {
+      "name": "generate-artifact",
+      "source": "./"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<title>{{title}}</title>
+<style>
+{{theme_css}}
+{{base_css}}
+</style>
+</head>
+<body class="print">
+<section class="print-cover">
+  <span class="lbl">{{ui:print.cover}}</span>
+  <h1>{{project}}</h1>
+  <p>{{ui:footer.updated}} {{updated}}</p>
+  <ul>{{toc}}</ul>
+</section>
+{{pages}}
+</body>
+</html>
+<!--part:print_page-->
+<section class="print-page">
+  <h1>{{title}}</h1>
+  <main>{{content}}</main>
+</section>
+<!--/part-->
+<!--part:toc_item-->
+<li>{{label}}</li>
+<!--/part-->

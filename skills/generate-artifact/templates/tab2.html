@@ -1,0 +1,33 @@
+<section class="card">
+  <div class="row-between"><span class="lbl">{{ui:t2.tree}}</span><span class="muted">{{ui:t2.tree_legend}}</span></div>
+  {{tree}}
+</section>
+<section class="stack">{{open}}</section>
+<div class="lbl">{{ui:t2.decided}}</div>
+<section class="stack">{{decided}}</section>
+<p class="note">{{ui:t2.readonly}}</p>
+<!--part:decision-->
+<details class="card decision {{state_class}}" id="{{id}}" {{open_attr}}>
+  <summary><strong>{{id}} · {{title}}</strong><span class="badge {{state}}">{{state_label}}</span><span class="muted">{{date}}</span>{{chosen_line}}</summary>
+  <p class="muted">{{ui:t2.linked}} {{ucs}}</p>
+  <div class="opts">{{options}}</div>
+  {{choice_reason}}
+</details>
+<!--/part-->
+<!--part:chosen_line-->
+<span class="muted">→ {{title}}</span>
+<!--/part-->
+<!--part:choice_reason-->
+<p><strong>{{ui:t2.choice}}:</strong> {{text}}</p>
+<!--/part-->
+<!--part:option-->
+<div class="opt {{status}}">
+  <div class="opt-head"><strong>{{title}}</strong><span class="badge {{status}}">{{status_label}}</span></div>
+  {{wireframe}}
+  <div class="fact">{{reason}}</div>
+  <dl>{{facts}}</dl>
+</div>
+<!--/part-->
+<!--part:fact-->
+<div class="fact"><dt>{{label}}:</dt> <dd>{{value}}</dd></div>
+<!--/part-->

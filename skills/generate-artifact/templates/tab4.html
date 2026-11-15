@@ -1,0 +1,54 @@
+<div class="split">
+  <aside class="side">
+    <span class="lbl">{{ui:t4.main}}</span>{{side_main}}
+    <span class="lbl">{{ui:t4.affected}}</span>{{side_affected}}
+  </aside>
+  <div class="main-col">{{ucs}}</div>
+</div>
+<!--part:side_link-->
+<a href="#{{id}}"><strong>{{id}}</strong> {{title}}</a>
+<!--/part-->
+<!--part:uc-->
+<section class="uc" id="{{id}}">
+  <div class="uc-head">
+    <div>
+      <h2>{{id}} · {{title}}</h2>
+      <span class="pill">{{tier}}</span> <span class="pill">{{ui:t4.source}}: {{source}}</span>
+      <p>{{ui:t4.simple}}: {{summary}}</p>
+    </div>
+    <div class="toggles">{{toggles}}</div>
+  </div>
+  <div class="card">
+    <div class="row-between"><span class="lbl">{{ui:t4.sequence}}</span><span class="muted">{{ui:t4.sequence_note}}</span></div>
+    {{good}}
+    {{alts}}
+  </div>
+  <div class="grid3">
+    <section class="card">
+      <div class="lbl">{{ui:t4.touchpoints}}</div>
+      <table><tr><th>{{ui:t4.scenario}}</th><th>{{ui:t4.step}}</th><th>{{ui:t4.sees}}</th></tr>{{touchpoints}}</table>
+    </section>
+    <section class="card">
+      <div class="lbl">{{ui:t4.legend}}</div>
+      <div class="legend-list">{{ui:t4.legend_call}}<br>{{ui:t4.legend_return}}<br>{{ui:t4.legend_expand}}</div>
+    </section>
+  </div>
+  {{details}}
+  <details class="card" {{open_attr}}><summary>{{ui:t4.changetrack}}</summary>{{track}}</details>
+</section>
+<!--/part-->
+<!--part:toggle-->
+<button type="button" class="tog {{kind}}" data-toggle="{{group}}" aria-expanded="{{expanded}}">{{label}}: <span class="on-show">{{ui:t4.show}}</span><span class="on-hide">{{ui:t4.hide}}</span></button>
+<!--/part-->
+<!--part:alt-->
+<div class="alt {{kind}}" data-group="{{group}}" {{hidden}}>
+  <span class="lbl">alt · {{label}} · {{title}}</span>
+  {{diagram}}
+</div>
+<!--/part-->
+<!--part:touchpoint_row-->
+<tr><td>{{scenario}}</td><td>{{step}}</td><td>{{sees}}</td></tr>
+<!--/part-->
+<!--part:detail-->
+<details class="card" {{open_attr}}><summary>{{ui:t4.detail}}: {{title}}</summary>{{diagram}}</details>
+<!--/part-->

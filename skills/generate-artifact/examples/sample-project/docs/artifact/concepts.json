@@ -1,0 +1,14 @@
+{
+  "concepts": [
+    {"id": "C1", "label": "new pattern", "title": "Event-driven status",
+     "summary": "A status change is sent as a small event the moment it happens, instead of waiting for the weekly batch. It replaces the spreadsheet round trip.",
+     "terms": "status event, freshness window",
+     "diagram": "diagrams/concept-c1.svg", "decisions": ["D1", "D2"], "ucs": ["UC-02"], "components": ["CMP-QUEUE"]},
+    {"id": "C2", "label": "new component", "title": "Aggregator",
+     "summary": "A worker that reads status events and writes the latest status and the history. It does not serve pages; the API does.",
+     "diagram": "diagrams/concept-c2.svg", "decisions": ["D1"], "ucs": ["UC-02", "UC-03"], "components": ["CMP-AGG"]},
+    {"id": "C3", "label": "behavior change", "title": "Status history, no overwrite",
+     "summary": "Before, an update overwrote the old status. Now every update adds a row, so reports can show what changed and when.",
+     "diagram": "diagrams/concept-c3.svg", "ucs": ["UC-01", "UC-03"], "components": ["CMP-DB"]}
+  ]
+}

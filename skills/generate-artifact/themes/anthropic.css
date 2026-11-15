@@ -1,0 +1,49 @@
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@500;600&display=swap");
+
+/* Theme: Anthropic. Tokens only; structure lives in templates/base.css. */
+:root {
+  color-scheme: light;
+
+  /* surface */
+  --bg: #FAF9F5;
+  --surface: #FFFFFF;
+  --surface-alt: #F0EEE6;
+  --fg: #141413;
+  --fg-muted: #5E5D59;
+  --border: #E3DFD3;
+  --accent: #D97757;
+  --accent-fg: #FFFFFF;
+  --link: #B5522F;
+  --shadow: 0 1px 2px rgba(20, 20, 19, 0.08);
+
+  /* type: Latin face first, Thai face as fallback so both scripts render */
+  --font-display: "Source Serif 4", "Noto Serif Thai", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", "IBM Plex Sans Thai", "Noto Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* status: differ in lightness and border style, not hue alone */
+  --unchanged-bg: #EFEDE6;
+  --unchanged-bd: #B0AEA5;
+  --unchanged-fg: #3D3D3A;
+  --changed-bg: #FBE3B0;
+  --changed-bd: #B87800;
+  --changed-fg: #5C3A00;
+  --new-bg: #CFE4F5;
+  --new-bd: #1F6FA8;
+  --new-fg: #0B3D63;
+  --removed-bg: #F3EEEE;
+  --removed-bd: #8A5A5A;
+  --removed-fg: #5A2E2E;
+  --deferred-bg: #E1DEF7;
+  --deferred-bd: #5B54B0;
+  --deferred-fg: #2B2672;
+  --chosen-bg: #141413;
+  --chosen-bd: #141413;
+  --chosen-fg: #FAF9F5;
+  --open-bg: #FBE3B0;
+  --open-bd: #B87800;
+  --open-fg: #5C3A00;
+  --rejected-bg: #F3EEEE;
+  --rejected-bd: #8A5A5A;
+  --rejected-fg: #5A2E2E;
+}

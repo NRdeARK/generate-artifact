@@ -1,0 +1,43 @@
+{
+  "outcomes": [
+    {"id": "O1", "text": "Anyone opens one page and sees every project's latest status within 10 seconds of a change.", "ucs": ["UC-01", "UC-02"]}
+  ],
+  "ucs": [
+    {"id": "UC-01", "tier": "Main", "title": "View project status", "source": "mixed",
+     "summary": "A team member opens the status page and sees every project's latest status and how fresh it is.",
+     "components": ["CMP-WEB", "CMP-API", "CMP-API-READ", "CMP-DB"],
+     "flows": [
+       {"id": "good", "kind": "good", "title": "Status page loads", "diagram": "diagrams/uc-01-good.svg",
+        "touchpoints": [{"step": "6", "sees": "Project cards with \"Updated 3s ago\""}]},
+       {"id": "bad-timeout", "kind": "bad", "title": "API timeout", "diagram": "diagrams/uc-01-bad.svg",
+        "touchpoints": [{"step": "2b", "sees": "\"Couldn't load status. Retry\""}]},
+       {"id": "edge-empty", "kind": "edge", "title": "Zero projects", "diagram": "diagrams/uc-01-edge.svg",
+        "touchpoints": [{"step": "6", "sees": "\"No projects yet. Create one\""}]}
+     ],
+     "details": [{"title": "Step 2: GET /projects (components inside the API)", "diagram": "diagrams/uc-01-detail.svg"}]},
+    {"id": "UC-02", "tier": "Main", "title": "Update a project's status", "source": "draft",
+     "summary": "A project lead changes a status and everyone watching sees the new value in seconds.",
+     "components": ["CMP-WEB", "CMP-API", "CMP-QUEUE", "CMP-AGG", "CMP-DB"],
+     "flows": [
+       {"id": "good", "kind": "good", "title": "Update is published", "diagram": "diagrams/uc-02-good.svg",
+        "touchpoints": [{"step": "1", "sees": "\"Status saved\""}]},
+       {"id": "bad-queue", "kind": "bad", "title": "Queue unavailable", "diagram": "diagrams/uc-02-bad.svg",
+        "touchpoints": [{"step": "3b", "sees": "\"Saved, but others may see it late\""}]},
+       {"id": "edge-duplicate", "kind": "edge", "title": "Same status sent twice", "diagram": "diagrams/uc-02-edge.svg",
+        "touchpoints": [{"step": "4", "sees": "No change and no duplicate history row"}]}
+     ]},
+    {"id": "UC-03", "tier": "Affected", "title": "Weekly report", "source": "code", "caused_by": "CMP-DB",
+     "summary": "Managers still receive a weekly summary, now built from status history instead of the spreadsheet.",
+     "components": ["CMP-CRON", "CMP-AGG", "CMP-DB"],
+     "flows": [
+       {"id": "good", "kind": "good", "title": "Report is emailed", "diagram": "diagrams/uc-03-good.svg",
+        "touchpoints": [{"step": "4", "sees": "Weekly email with every project's status"}]},
+       {"id": "edge-quiet", "kind": "edge", "title": "No changes this week", "diagram": "diagrams/uc-03-edge.svg",
+        "touchpoints": [{"step": "3", "sees": "Email says nothing changed"}]}
+     ]}
+  ],
+  "crud": [
+    {"entity": "Status update", "create": "UC-02", "read": "UC-01", "update": "n/a: updates append history instead", "delete": "n/a: history is kept"},
+    {"entity": "Weekly report", "create": "UC-03", "read": "UC-03", "update": "n/a: regenerated every week", "delete": "n/a: retained for one year"}
+  ]
+}

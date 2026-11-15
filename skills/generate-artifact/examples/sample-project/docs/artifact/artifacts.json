@@ -1,0 +1,11 @@
+{
+  "project": "Status Board",
+  "tabs": {
+    "intent": {"slug": "PLACEHOLDER-intent", "url": "https://claude.ai/artifact/PLACEHOLDER-intent", "version": "PLACEHOLDER"},
+    "tab1": {"slug": "PLACEHOLDER-tab1", "url": "https://claude.ai/artifact/PLACEHOLDER-tab1", "version": "PLACEHOLDER"},
+    "tab2": {"slug": "PLACEHOLDER-tab2", "url": "https://claude.ai/artifact/PLACEHOLDER-tab2", "version": "PLACEHOLDER"},
+    "tab3": {"slug": "PLACEHOLDER-tab3", "url": "https://claude.ai/artifact/PLACEHOLDER-tab3", "version": "PLACEHOLDER"},
+    "tab4": {"slug": "PLACEHOLDER-tab4", "url": "https://claude.ai/artifact/PLACEHOLDER-tab4", "version": "PLACEHOLDER"},
+    "tab5": {"slug": "PLACEHOLDER-tab5", "url": "https://claude.ai/artifact/PLACEHOLDER-tab5", "version": "PLACEHOLDER"}
+  }
+}

@@ -1,0 +1,30 @@
+{{overview}}
+<section class="stack">{{components}}</section>
+{{changelog}}
+<!--part:component-->
+<details class="card comp {{status}}" id="{{id}}" {{open_attr}}>
+  <summary><strong>{{name}}</strong> {{badge}} <span class="muted">C4 {{level}}</span></summary>
+  <div class="comp-body">
+    <div><span class="lbl">{{ui:t5.what}}</span>{{what}}</div>
+    <div><span class="lbl">{{ui:t5.why}}</span>{{why}} <span class="muted">{{ui:t5.links}} {{links}}</span></div>
+    {{data}}
+    {{infra}}
+    {{files}}
+  </div>
+</details>
+<!--/part-->
+<!--part:data_table-->
+<div><span class="lbl">{{ui:t5.data}}</span><table><tr><th>{{ui:col.object}}</th><th>{{ui:col.change}}</th><th>{{ui:col.migration}}</th></tr>{{rows}}</table></div>
+<!--/part-->
+<!--part:infra_table-->
+<div><span class="lbl">{{ui:t5.infra}}</span><table><tr><th>{{ui:col.item}}</th><th>{{ui:ba.before}}</th><th>{{ui:ba.after}}</th></tr>{{rows}}</table></div>
+<!--/part-->
+<!--part:row3-->
+<tr><td>{{a}}</td><td>{{b}}</td><td>{{c}}</td></tr>
+<!--/part-->
+<!--part:files-->
+<details {{open_attr}}><summary>{{ui:t5.files}} ({{count}})</summary><ul>{{items}}</ul></details>
+<!--/part-->
+<!--part:file_item-->
+<li><code>{{path}}</code></li>
+<!--/part-->

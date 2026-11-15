@@ -1,0 +1,48 @@
+{
+  "components": [
+    {"id": "CMP-SLACK", "name": "Slack", "c4_level": "L1", "status": "unchanged"},
+    {"id": "CMP-WEB", "name": "Web app", "c4_level": "L2", "status": "changed",
+     "change": {
+       "what": "New status page that lists every project and shows how fresh each status is.",
+       "why": "UC-01 needs a single page with a freshness label; the old app only had a per-project view.",
+       "ucs": ["UC-01", "UC-02"], "decisions": ["D3"],
+       "files": ["web/src/pages/StatusPage.tsx", "web/src/components/StatusCard.tsx", "web/src/api/projects.ts"]
+     }},
+    {"id": "CMP-API", "name": "API", "c4_level": "L2", "status": "unchanged"},
+    {"id": "CMP-API-READ", "name": "Status read handler", "c4_level": "L3", "status": "unchanged"},
+    {"id": "CMP-DB", "name": "Projects DB", "c4_level": "L2", "status": "changed",
+     "change": {
+       "what": "Adds a status timestamp and an append-only status history table.",
+       "why": "Freshness needs a timestamp, and keeping history replaces the manual spreadsheet record.",
+       "ucs": ["UC-01", "UC-03"], "decisions": ["D1"],
+       "data": [
+         {"object": "projects", "change": "+ status_updated_at", "migration": "0042_add_status_ts"},
+         {"object": "status_history", "change": "new table", "migration": "0043_history"}
+       ],
+       "infra": [{"item": "Read replicas", "before": 0, "after": 1}],
+       "files": ["db/migrations/0042_add_status_ts.sql", "db/migrations/0043_history.sql"]
+     }},
+    {"id": "CMP-QUEUE", "name": "Event queue", "c4_level": "L2", "status": "changed",
+     "change": {
+       "what": "Status updates now flow as events instead of waiting for the weekly batch.",
+       "why": "UC-02 must reach every viewer in under 10 seconds, which a batch cannot do.",
+       "ucs": ["UC-02"], "decisions": ["D1", "D2"],
+       "infra": [{"item": "Queues", "before": 0, "after": 1}, {"item": "Dead-letter queue", "before": 0, "after": 1}],
+       "files": ["infra/queue.tf"]
+     }},
+    {"id": "CMP-CRON", "name": "Cron export", "c4_level": "L2", "status": "removed",
+     "change": {
+       "what": "The weekly spreadsheet-to-email job is switched off.",
+       "why": "The Aggregator builds the weekly report from status history, so the cron job has nothing left to do.",
+       "ucs": ["UC-03"], "decisions": ["D1"],
+       "files": ["jobs/weekly_export.py"]
+     }},
+    {"id": "CMP-AGG", "name": "Aggregator", "c4_level": "L2", "status": "new",
+     "change": {
+       "what": "A worker that reads status events, writes the latest status and history, and builds the weekly report.",
+       "why": "Something has to turn events into stored status and the weekly report once the cron job is gone.",
+       "ucs": ["UC-02", "UC-03"], "decisions": ["D1", "D2"],
+       "files": ["aggregator/main.py", "aggregator/report.py", "aggregator/handlers.py", "aggregator/tests/test_handlers.py"]
+     }}
+  ]
+}

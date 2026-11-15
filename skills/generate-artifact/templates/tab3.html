@@ -1,0 +1,24 @@
+<section>
+  <div class="lbl">{{ui:t3.intro}}</div>
+  <p class="muted">{{ui:t3.intro_sub}}</p>
+  <div class="chips">{{chips}}</div>
+</section>
+{{blocks}}
+<!--part:chip-->
+<a class="chip" href="#{{id}}">{{id}} {{title}}</a>
+<!--/part-->
+<!--part:concept-->
+<article class="card blk" id="{{id}}">
+  <div class="dg">{{diagram}}</div>
+  <div class="tx">
+    <div class="lbl">{{id}} · {{label}}</div>
+    <h2>{{title}}</h2>
+    {{summary}}
+    {{terms}}
+    <span class="muted">{{ui:t3.related}} {{related}}</span>
+  </div>
+</article>
+<!--/part-->
+<!--part:terms-->
+<p class="muted">{{ui:t3.terms}}: {{text}}</p>
+<!--/part-->

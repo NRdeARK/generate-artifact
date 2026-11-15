@@ -209,6 +209,104 @@ class I18nTests(FixtureCase):
         self.assertEqual(set(en), set(th))
 
 
+class ReviewRegressionTests(FixtureCase):
+    """One test per REVIEW_CODEX.md finding (F1-F8) and per extra spec gap (GA-GD)."""
+
+    def render_text(self, tab):
+        run("render", str(self.dir), "--tabs", tab)
+        path = self.dir / "build" / f"{tab}.html"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_f1_markup_in_uc_id_is_escaped_and_rejected(self):
+        payload = 'UC-01"><img src=x onerror=alert(1)>'
+        self.edit("usecases.json", lambda d: d["ucs"][0].update(id=payload))
+        self.assertNotIn("<img src=x onerror", self.render_text("tab4"))
+        self.assertIn("bad-id", self.codes()[1])
+
+    def test_f2_non_https_url_is_not_linked_and_is_an_error(self):
+        self.edit("artifacts.json", lambda d: d["tabs"]["tab2"].update(url="javascript:alert(1)"))
+        text = self.render_text("intent")
+        self.assertNotIn("javascript:", text)
+        self.assertRegex(text, r'class="nav-disabled"[^>]*>(?:<span[^>]*>)?2 Decisions')
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-url", codes)
+
+    def test_f3_missing_id_duplicate_uc_and_empty_crud(self):
+        self.edit("registry.json", lambda d: d["components"][0].pop("id"))
+        self.assertIn("missing-id", self.codes()[1])
+        self.setUp()
+        self.edit("usecases.json", lambda d: d["ucs"].append(dict(d["ucs"][0])))
+        self.assertIn("duplicate-id", self.codes()[1])
+        self.setUp()
+        self.edit("usecases.json", lambda d: d.update(crud=[]))
+        self.assertIn("crud-missing", self.codes()[1])
+
+    def test_f4_component_change_needs_decisions_and_files(self):
+        def change(d):
+            agg = next(c for c in d["components"] if c["id"] == "CMP-AGG")
+            agg["change"].update(files=[], decisions=[])
+        self.edit("registry.json", change)
+        self.assertTrue({"change-no-decision", "change-no-files"} <= self.codes()[1])
+
+    def test_f4_waiver_with_reason_is_accepted(self):
+        def change(d):
+            agg = next(c for c in d["components"] if c["id"] == "CMP-AGG")
+            agg["change"].update(files=[], decisions=[], waive={"files": "not built yet", "decisions": "no fork"})
+        self.edit("registry.json", change)
+        self.assertEqual(self.codes()[0], 0)
+
+    def test_f5_wrong_shapes_give_errors_not_tracebacks(self):
+        self.edit("usecases.json", lambda d: d.update(ucs=None))
+        self.assertIn(run("validate", str(self.dir))[0], (1, 2))
+        self.setUp()
+        (self.dir / "usecases.json").write_text("[1, 2]", encoding="utf-8")
+        self.assertEqual(run("validate", str(self.dir))[0], 2)
+        self.setUp()
+        self.edit("usecases.json", lambda d: d["ucs"][0].update(flows=None))
+        self.assertIn(run("validate", str(self.dir))[0], (1, 2))
+        self.setUp()
+        self.edit("artifacts.json", lambda d: d.update(tabs=None))
+        self.assertEqual(run("render", str(self.dir))[0], 0)
+
+    def test_f6_python_39_is_documented_and_enforced(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Python 3.9+", readme)
+        self.assertNotIn("3.8", readme)
+        self.assertIn("(3, 9)", (SKILL / "scripts" / "artifact_sync.py").read_text(encoding="utf-8"))
+
+    def test_f7_every_details_block_is_open_in_print(self):
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(sync.present_tabs(self.dir))
+        self.assertEqual(re.findall(r"<details(?![^>]*\bopen\b)[^>]*>", document), [])
+
+    def test_f8_skill_commits_before_rendering(self):
+        steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 5. Publish loop")[1].split("## 6.")[0]
+        self.assertLess(steps.index("**Commit**"), steps.index("artifact_sync.py render"))
+
+    def test_ga_affected_cause_must_be_a_changing_component(self):
+        self.edit("usecases.json", lambda d: d["ucs"][2].update(caused_by="CMP-API"))
+        self.assertIn("affected-bad-cause", self.codes()[1])
+
+    def test_gb_validator_rejects_diagram_paths_the_renderer_rejects(self):
+        (self.dir / "diagrams" / "notes.png").write_bytes(b"x")
+        self.edit("concepts.json", lambda d: d["concepts"][0].update(diagram="diagrams/notes.png"))
+        self.assertIn("bad-diagram-path", self.codes()[1])
+        self.edit("concepts.json", lambda d: d["concepts"][0].update(diagram="../outside.svg"))
+        (self.tmp / "outside.svg").write_text("<svg/>", encoding="utf-8")
+        self.assertIn("bad-diagram-path", self.codes()[1])
+
+    def test_gc_theme_flag_selects_theme_file(self):
+        theme = self.tmp / "mine.css"
+        theme.write_text(":root { --accent: #123456; }", encoding="utf-8")
+        run("render", str(self.dir), "--theme", str(theme), "--tabs", "tab1")
+        text = (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+        self.assertIn("--accent: #123456", text)
+        self.assertNotIn("#D97757", text)
+        self.assertEqual(run("render", str(self.dir), "--theme", "no-such-theme")[0], 2)
+        self.assertEqual(run("export-pdf", str(self.dir), "--theme", "no-such-theme", "--dry-run")[0], 2)
+
+
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):
         offenders = []

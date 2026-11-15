@@ -8,7 +8,7 @@ description: Turn project work into private claude.ai artifact pages. Two kinds.
 Pages start **private to the user**. Sharing happens only in the claude.ai UI; these tools can't share, unshare or make a page public.
 
 Spec files next to this one: `intent.md` (intent page), `solution.md` (all 5 tabs and cross-cutting rules). Read the one you route to before drafting.
-Script: `scripts/artifact_sync.py` (resolve the path relative to this file). Python 3, stdlib only, never calls the network.
+Script: `scripts/artifact_sync.py` (resolve the path relative to this file). Python 3.9+, stdlib only, never calls the network.
 
 ## 1. Route
 | User wants | Go to |
@@ -42,11 +42,11 @@ Build only the tabs the work needs (each is its own artifact). A tab whose data 
 1. Edit data files.
 2. **Thai:** `python scripts/artifact_sync.py i18n-diff <dir>` lists missing/stale entries as JSON. Spawn one **Sonnet** sub-agent to translate only those into `i18n/th.json` as `{key: {"source_hash": <from diff>, "text": {path: thai}}}`. Keep IDs, component names, code, paths untranslated.
 3. `python scripts/artifact_sync.py validate <dir>` - fix every ERROR (exit 1). Warnings (stale Thai, missing diagram) are shown; fix or tell the user.
-4. `python scripts/artifact_sync.py render <dir> [--tabs tab2 ...]` -> `<dir>/build/<tab>.html` (self-contained).
-5. **Commit** the data (`git commit`, mention IDs like `UC-02` in the message so change tracks fill in). The footer and changelogs come from git.
+4. **Commit** the data (`git commit`, mention IDs like `UC-02` in the message so change tracks fill in). The footer and changelogs come from git, so always render *after* this commit.
+5. `python scripts/artifact_sync.py render <dir> [--tabs tab2 ...] [--theme anthropic]` -> `<dir>/build/<tab>.html` (self-contained). `--theme` takes a name in `themes/` or a path to a .css file.
 6. Publish each changed page with the claude-artifacts tools: first call `guide` (topic `pages`) once per session. New: `publish_files` with `files: [{as: "index.html", path: <build file>}]`, `title` and `icon`. Update: `get_artifact` for `base_version`, republish (pass `shared_live` if shared).
    Titles: `<Project> · <n> <Tab>` e.g. `Status Board · 2 Decisions` (the rendered `<title>` already matches; no version in the title).
-7. Write `slug`, `url`, `version` into `artifacts.json` under `tabs.<intent|tab1..tab5>`, commit again. A newly created tab changes every other page's nav, so re-render and republish the others once (cost: only when a tab is added).
+7. Write `slug`, `url`, `version` into `artifacts.json` under `tabs.<intent|tab1..tab5>` (URLs must be https on claude.ai or they are not linked), commit again. A newly created tab changes every other page's nav, so re-render and republish the others once (cost: only when a tab is added).
 8. Reply with the URLs and one line per page. Do not paste page content.
 
 Cost: build only the tabs needed; republish only pages whose data changed; Thai only for changed entries.

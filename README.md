@@ -14,18 +14,18 @@ claude plugin marketplace add <owner>/generate-artifact
 claude plugin install generate-artifact@generate-artifact
 ```
 
-Requires Python 3.8+ (stdlib only) and git. PDF export uses headless Edge or Chrome if found.
+Requires Python 3.9+ (stdlib only) and git. PDF export uses headless Edge or Chrome if found.
 
 ## Use
 
-Ask Claude: "generate the intent artifact for <project>", then, after you approve it in chat, "generate the solution artifact". Claude follows `skills/generate-artifact/SKILL.md`: write data files, translate Thai changes, `validate`, `render`, commit, publish, record URLs in `artifacts.json`.
+Ask Claude: "generate the intent artifact for <project>", then, after you approve it in chat, "generate the solution artifact". Claude follows `skills/generate-artifact/SKILL.md`: write data files, translate Thai changes, `validate`, commit, `render`, publish, record URLs in `artifacts.json`.
 
 Script (run from the plugin, point it at a project's `docs/artifact` folder):
 
 ```
 python skills/generate-artifact/scripts/artifact_sync.py validate   <dir> [--strict]
-python skills/generate-artifact/scripts/artifact_sync.py render     <dir> [--tabs intent tab1 ...] [--dry-run]
-python skills/generate-artifact/scripts/artifact_sync.py export-pdf <dir> [--lang th] [--dry-run]
+python skills/generate-artifact/scripts/artifact_sync.py render     <dir> [--tabs intent tab1 ...] [--theme NAME|FILE.css] [--dry-run]
+python skills/generate-artifact/scripts/artifact_sync.py export-pdf <dir> [--lang th] [--theme NAME|FILE.css] [--dry-run]
 python skills/generate-artifact/scripts/artifact_sync.py i18n-diff  <dir>
 ```
 

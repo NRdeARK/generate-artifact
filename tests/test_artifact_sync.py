@@ -1354,7 +1354,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
 
     def test_phone_layout_on_all_six_pages(self):
-        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 3 + 1)  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 3 + 1 + 3 + 2 + 3)  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
         for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
             self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
 
@@ -1369,7 +1369,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assert_group("touch.", 11)
 
     def test_viewer_layout_toggle_on_desktop(self):
-        self.assert_group("desktop.", 4)
+        self.assert_group("desktop.", 5)
 
     def test_thai_glyphs_render_and_nothing_overflows(self):
         self.assert_group("thai.", 2 + 12)
@@ -1387,7 +1387,7 @@ class MobileTableTests(FixtureCase):
     def test_every_table_on_every_page_sits_in_a_scroll_box(self):
         for name, text in self.pages().items():
             with self.subTest(page=name):
-                self.assertEqual(text.count("<table"), text.count('<div class="table-wrap"><table'))
+                self.assertEqual(text.count("<table"), len(re.findall(r'<div class="table-wrap[^"]*"><table', text)))
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertRegex(css, r"\.table-wrap \{[^}]*overflow-x: auto")
 
@@ -1421,6 +1421,56 @@ class MobileTableTests(FixtureCase):
         for rule in (r"\.card[^{]*\{[^}]*min-width: 0", r"overflow-wrap: anywhere", r"svg[^{]*\{[^}]*max-width: 100%", r"body \{[^}]*overflow-x: clip",
                      r"\.nav \{[^}]*overflow-x: auto"):
             self.assertRegex(css, rule)
+
+class FlipTableTests(FixtureCase):
+    def pages(self):
+        run("render", str(self.dir))
+        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+
+    def test_every_key_table_is_rendered_twice_from_the_same_rows(self):
+        pages = self.pages()
+        uc = re.search(r'<table class="uc-table stack">.*?</table>', pages["tab1"], re.S).group(0)
+        flip = re.search(r'<table class="flip">.*?</table>', pages["tab1"], re.S).group(0)
+        self.assertEqual(flip.count('<th scope="row">'), 5)  # one row per field
+        for row in re.findall(r"<tr><th scope=\"row\">.*?</tr>", flip, re.S):
+            self.assertEqual(row.count("<td>"), 3)  # one column per item (UC)
+        for needle in ("UC-01", "UC-03", "A team member opens the status page", "via", "Open in Tab 4"):
+            self.assertIn(needle, re.sub(r"<[^>]+>", " ", flip))
+            self.assertIn(needle, re.sub(r"<[^>]+>", " ", uc))
+        for page, expected in (("tab1", 2), ("tab4", 3), ("tab5", 2)):
+            self.assertEqual(pages[page].count('<table class="flip">'), expected, page)
+            self.assertEqual(len(re.findall(r'<table class="[^"]*stack[^"]*">', pages[page])), expected, page)
+
+    def test_toggle_markup_defaults_to_flipped(self):
+        text = self.pages()["tab1"]
+        self.assertEqual(text.count('data-table-view="flip" aria-pressed="true"'), 2)
+        self.assertEqual(text.count('data-table-view="cards" aria-pressed="false"'), 2)
+        for label in ("Flip", "สลับแกน", "Cards", "การ์ด", "swipe", "ปัดดู"):
+            self.assertIn(label, text)
+
+    def test_crud_matrix_and_sample_rows_are_not_flipped(self):
+        pages = self.pages()
+        self.assertNotIn("tblset", pages["tab1"].split('<table class="crud-table">')[1].split("</table>")[0])
+        tab5 = pages["tab5"]
+        self.assertEqual(tab5.count('<table class="flip">'), 2)  # only the two dictionary column tables, not the sample rows
+
+    def test_css_flips_only_on_narrow_screens_with_snap_sticky_label_and_fade(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        wide = css.split("@media (max-width: 640px)")[0]
+        self.assertRegex(wide, r"\.tbl-flip \{ display: none; \}")
+        self.assertRegex(wide, r"\.view-toggle \{ display: none; \}")
+        narrow = css.split("@media (max-width: 640px)")[-1]
+        for needle in ('html[data-table-view="cards"] .tbl-normal', ".tbl-flip", "scroll-snap-type: x mandatory", "scroll-snap-align: start", "position: sticky",
+                       ".swipe-hint", "linear-gradient(to right, transparent, var(--surface))"):
+            self.assertIn(needle, css)
+        self.assertRegex(narrow, r"\.tbl-normal \{ display: none; \}")
+        self.assertIn("body.print .tbl-flip", css)
+
+    def test_script_remembers_the_choice_globally_in_try_catch(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        self.assertIn("ga-table-view", js)
+        self.assertRegex(js, r"try \{[^}]*localStorage\.setItem\(TABLE_VIEW_KEY")
+        self.assertIn("flip-scroll", js)
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

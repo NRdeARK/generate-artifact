@@ -161,5 +161,9 @@
   "t3.before": "Before",
   "t3.now": "Now",
   "t3.why_matters": "Why it matters",
-  "t3.analogy": "Think of it like"
+  "t3.analogy": "Think of it like",
+  "tbl.flip": "Flip",
+  "tbl.cards": "Cards",
+  "tbl.swipe": "swipe →",
+  "tbl.view": "Table view"
 }

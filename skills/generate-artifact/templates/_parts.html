@@ -69,3 +69,19 @@
 <!--part:level_button-->
 <button type="button" data-level-btn="{{level}}" aria-pressed="{{pressed}}">{{label}}</button>
 <!--/part-->
+<!--part:tblset-->
+<div class="tblset">
+  <div class="view-toggle" role="group" aria-label="{{label_view}}"><button type="button" data-table-view="flip" aria-pressed="true">{{ui:tbl.flip}}</button><button type="button" data-table-view="cards" aria-pressed="false">{{ui:tbl.cards}}</button></div>
+  <div class="tbl-normal"><div class="table-wrap"><table class="{{cls}}"><tr class="stack-head">{{head}}</tr>{{rows}}</table></div></div>
+  <div class="tbl-flip"><div class="table-wrap flip-scroll"><table class="flip">{{flip_rows}}</table></div><span class="swipe-hint" aria-hidden="true">{{ui:tbl.swipe}}</span></div>
+</div>
+<!--/part-->
+<!--part:stack_cell-->
+<td{{attrs}}><span class="cell-label">{{label}}</span>{{content}}</td>
+<!--/part-->
+<!--part:flip_row-->
+<tr><th scope="row">{{label}}</th>{{cells}}</tr>
+<!--/part-->
+<!--part:flip_cell-->
+<td>{{content}}</td>
+<!--/part-->

@@ -225,6 +225,9 @@ body.print .expand, body.print .viewer { display: none; }
 
 /* tables: always in a scroll box; the key ones become labelled cards on narrow screens */
 .cell-label { display: none; }
+.tbl-flip { display: none; }
+.view-toggle { display: none; }
+.swipe-hint { display: none; }
 .crud-table th:first-child, .crud-table td:first-child { position: sticky; left: 0; background: var(--surface); }
 .crud-table th:first-child { background: var(--surface-alt); }
 @media (max-width: 640px) {
@@ -235,4 +238,23 @@ body.print .expand, body.print .viewer { display: none; }
   table.stack td { border: 0; padding: 4px 10px; }
   table.stack .cell-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-muted); }
   .crud-table { min-width: 34rem; }
+
+  /* flipped view (default on phones): fields down a sticky first column, one item per column, swipe sideways */
+  .view-toggle { display: inline-flex; margin-bottom: 6px; }
+  .view-toggle button { font: inherit; font-size: 12px; padding: 4px 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
+  .view-toggle button:first-child { border-radius: 6px 0 0 6px; }
+  .view-toggle button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+  .view-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .tbl-normal { display: none; }
+  .tbl-flip { display: block; position: relative; }
+  html[data-table-view="cards"] .tbl-normal { display: block; }
+  html[data-table-view="cards"] .tbl-flip { display: none; }
+  .flip-scroll { scroll-snap-type: x mandatory; scroll-padding-left: 5.5rem; }
+  .table-wrap > table.flip { min-width: 0; width: max-content; }
+  table.flip th[scope="row"] { position: sticky; left: 0; z-index: 1; width: 5.5rem; min-width: 5.5rem; max-width: 5.5rem; background: var(--surface-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.flip td { width: calc(100vw - 4rem - 5.5rem - 2.5rem); min-width: 9rem; scroll-snap-align: start; vertical-align: top; background: var(--surface); }
+  .tbl-flip::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 2.5rem; background: linear-gradient(to right, transparent, var(--surface)); pointer-events: none; transition: opacity 0.2s; }
+  .swipe-hint { display: block; position: absolute; right: 0.4rem; bottom: 0.3rem; z-index: 2; font-size: 11px; color: var(--fg-muted); background: var(--surface); padding: 2px 6px; border-radius: 4px; transition: opacity 0.2s; }
+  .tbl-flip.scrolled .swipe-hint, .tbl-flip.at-end .swipe-hint, .tbl-flip.at-end::after { opacity: 0; }
 }
+body.print .tbl-flip, body.print .view-toggle { display: none !important; }

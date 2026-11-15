@@ -6,11 +6,11 @@
   <div class="lbl">{{ui:t1.outcomes}}</div>
   {{outcomes}}
   {{tree}}
-  <div class="table-wrap"><table class="uc-table stack"><tr class="stack-head"><th>{{ui:col.id}}</th><th>{{ui:col.tier}}</th><th>{{ui:col.summary}}</th><th>{{ui:col.traced}}</th><th>{{ui:col.details}}</th></tr>{{uc_rows}}</table></div>
+  {{uc_table}}
 </section>
 <section class="card">
     <div class="lbl">{{ui:t1.impact}}</div>
-    <div class="table-wrap"><table class="stack"><tr class="stack-head"><th>{{ui:col.component}}</th><th>{{ui:col.change}}</th><th>{{ui:col.affected_uc}}</th></tr>{{impact_rows}}</table></div>
+    {{impact_table}}
 </section>
 <section class="card">
     <div class="lbl">{{ui:t1.crud}}</div>
@@ -19,12 +19,6 @@
 {{overview}}
 <!--part:outcome-->
 <div class="banner"><span class="lbl">{{id}}</span><p>{{text}}</p></div>
-<!--/part-->
-<!--part:uc_row-->
-<tr><td><span class="cell-label">{{ui:col.id}}</span>{{ref}}</td><td><span class="cell-label">{{ui:col.tier}}</span><span class="pill {{tier_class}}">{{tier}}</span></td><td><span class="cell-label">{{ui:col.summary}}</span>{{summary}}</td><td><span class="cell-label">{{ui:col.traced}}</span>{{traced}}</td><td><span class="cell-label">{{ui:col.details}}</span>{{details}}</td></tr>
-<!--/part-->
-<!--part:impact_row-->
-<tr><td><span class="cell-label">{{ui:col.component}}</span>{{component}} <span class="muted">({{level}})</span></td><td><span class="cell-label">{{ui:col.change}}</span>{{change}}</td><td><span class="cell-label">{{ui:col.affected_uc}}</span>{{ucs}}</td></tr>
 <!--/part-->
 <!--part:crud_row-->
 <tr><td>{{entity}}</td>{{cells}}</tr>

@@ -869,11 +869,11 @@ class Site:
                 values = "".join(self.part("dict_value", value=esc(str(v.get("value", ""))), meaning=self.tx(cid, f"{base}.columns.{ci}.values.{vi}.meaning"))
                                  for vi, v in enumerate(col.get("values") or []))
                 nullable = col.get("nullable")
-                rows.append(self.part(
-                    "dict_row", status=status, marker=marker, name=esc(str(col.get("name", ""))), type=esc(str(col.get("type", ""))),
-                    nullable="" if nullable is None else self.ui("dict.yes" if nullable else "dict.no"),
-                    default=esc(str(col.get("default", "-"))), meaning=self.tx(cid, f"{base}.columns.{ci}.meaning"), values=values,
-                    samples=", ".join(f"<code>{esc(str(v))}</code>" for v in col.get("samples") or [])))
+                rows.append([
+                    f'<span class="badge {status}"><span aria-hidden="true">{marker}</span></span> <code>{esc(str(col.get("name", "")))}</code>',
+                    f'<code>{esc(str(col.get("type", "")))}</code>', "" if nullable is None else self.ui("dict.yes" if nullable else "dict.no"),
+                    f'<code>{esc(str(col.get("default", "-")))}</code>', self.tx(cid, f"{base}.columns.{ci}.meaning"), values,
+                    ", ".join(f"<code>{esc(str(v))}</code>" for v in col.get("samples") or [])])
                 example = col.get("example")
                 if isinstance(example, dict):
                     examples.append(self.part("dict_example", column=esc(str(col.get("name", ""))), before=esc(str(example.get("before", ""))), after=esc(str(example.get("after", "")))))
@@ -884,7 +884,9 @@ class Site:
             status = table.get("status", "changed")
             blocks.append(self.part(
                 "dict_table", open_attr=self.open_attr(), table=esc(str(table.get("table", ""))), badge=self.part("badge", status=esc(status), label=self.ui(f"status.{status}")),
-                count=self.ui_fmt("dict.columns", n=len(table.get("columns") or [])), rows="".join(rows), examples="".join(examples), sample_rows=sample_html))
+                count=self.ui_fmt("dict.columns", n=len(table.get("columns") or [])),
+                grid=self.table_set("dict-cols", ["dict.name", "dict.type", "dict.nullable", "dict.default", "dict.meaning", "dict.allowed", "dict.samples"], rows, ' class="nowrap"'),
+                examples="".join(examples), sample_rows=sample_html))
         return self.part("dictionary", tables="".join(blocks)) if blocks else ""
 
     def file_item(self, entry):
@@ -905,6 +907,17 @@ class Site:
             parts = ", ".join(ui[f"filesummary.{kind}"].format(n=n) for kind, n in counts.items() if n)
             return f"{ui['t5.files']} ({len(entries)}): {parts}"
         return self.bi(line(self.ui_en), line({**self.ui_en, **self.ui_th}))
+
+    def table_set(self, cls, columns, rows, first_cell_attrs=""):
+        """The same rows twice. Normal table (labelled cards on narrow screens) and a flipped table
+        (field names down a sticky first column, one column per item). CSS picks one; both are real HTML."""
+        head = "".join(f"<th>{self.ui(key)}</th>" for key in columns)
+        normal = "".join("<tr>" + "".join(self.part("stack_cell", attrs=first_cell_attrs if j == 0 else "", label=self.ui(key), content=content)
+                                          for j, (key, content) in enumerate(zip(columns, row))) + "</tr>" for row in rows)
+        flipped = "".join(self.part("flip_row", label=self.ui(key), cells="".join(self.part("flip_cell", content=row[j]) for row in rows))
+                          for j, key in enumerate(columns))
+        return self.part("tblset", cls=" ".join(filter(None, [cls, "stack"])), head=head, rows=normal, flip_rows=flipped,
+                         label_view=esc(self.ui_plain("tbl.view"), quote=True))
 
     def svg_root_id(self, rel):
         clean, _ = read_diagram(self.p.root, rel) if rel else (None, [])
@@ -956,18 +969,20 @@ class Site:
         affected = [u for u in self.p.ucs if u.get("tier") == "Affected"]
         outcomes = "".join(self.part("outcome", id=esc(o.get("id", "")), text=self.tx(o.get("id"), "text"))
                            for o in self.p.usecases["outcomes"])
-        rows = "".join(self._uc_row(u) for tier in TIERS for u in self.p.ucs if u.get("tier") == tier)
-        impact = "".join(self.part(
-            "impact_row", component=self.comp_name(c.get("id")), level=esc(c.get("c4_level", "")), change=self.tx(c.get("id"), "what"),
-            ucs=self.refs([u["id"] for u in affected if u.get("caused_by") == c.get("id")]) or self.ui("t1.none"))
-            for c in self.p.components if c.get("status") in ("changed", "new", "removed"))
+        uc_table = self.table_set("uc-table", ["col.id", "col.tier", "col.summary", "col.traced", "col.details"],
+                                  [self._uc_row(u) for tier in TIERS for u in self.p.ucs if u.get("tier") == tier])
+        impact_table = self.table_set("", ["col.component", "col.change", "col.affected_uc"], [
+            [f'{self.comp_name(c.get("id"))} <span class="muted">({esc(c.get("c4_level", ""))})</span>', self.tx(c.get("id"), "what"),
+             self.refs([u["id"] for u in affected if u.get("caused_by") == c.get("id")]) or self.ui("t1.none")]
+            for c in self.p.components if c.get("status") in ("changed", "new", "removed")])
         crud = "".join(self.part("crud_row", entity=esc(r.get("entity", "")), cells="".join(self._crud_cell(r.get(op)) for op in CRUD_OPS))
                        for r in self.p.usecases["crud"])
         slots = dict(recap=recap, issues=issues, outcomes=outcomes, tree=self.diagram(uc_tree_path(self.p), "outcome to use cases"),
-                     uc_rows=rows, impact_rows=impact, crud_rows=crud, overview=self.before_after("t1.overview"))
+                     uc_table=uc_table, impact_table=impact_table, crud_rows=crud, overview=self.before_after("t1.overview"))
         return slots, ""
 
     def _uc_row(self, uc):
+        """Cell contents of one UC table row (same order as the table columns)."""
         uid, tier = uc.get("id"), uc.get("tier", "Main")
         if tier == "Affected":
             traced = f'{self.ui("t1.via")} {self.comp_name(uc.get("caused_by"))}'
@@ -978,8 +993,8 @@ class Site:
         label = self.ui("t1.open")
         details = (self.part("ref_link", href=esc(f"{url}#{uid}", quote=True), label=label) if url and isinstance(uid, str)
                    else self.part("ref_plain", label=label))
-        return self.part("uc_row", ref=self.ref(uid) if isinstance(uid, str) else "", tier_class=esc(tier.lower()), tier=self.ui(f"tier.{tier}"),
-                         summary=self.tx(uid, "summary"), traced=traced, details=details)
+        return [self.ref(uid) if isinstance(uid, str) else "", f'<span class="pill {esc(tier.lower())}">{self.ui(f"tier.{tier}")}</span>',
+                self.tx(uid, "summary"), traced, details]
 
     def _crud_cell(self, value):
         value = (value or "").strip()
@@ -1057,8 +1072,9 @@ class Site:
                           for kind in ("bad", "edge") if any(f.get("kind") == kind for f in flows))
         chips = "".join(self.part("toggle_fragment", kind=esc(f["kind"]), target=target, fragment=esc(str(f.get("id", "")), quote=True), label=scenario(i, f))
                         for i, f in enumerate(flows) if f.get("kind") in ("bad", "edge"))
-        rows = "".join(self.part("touchpoint_row", scenario=scenario(i, f), step=esc(str(t.get("step", ""))), sees=self.tx(uid, f"flows.{i}.touchpoints.{j}.sees"))
-                       for i, f in enumerate(flows) for j, t in enumerate(f.get("touchpoints") or []))
+        rows = self.table_set("", ["t4.scenario", "t4.step", "t4.sees"], [
+            [scenario(i, f), esc(str(t.get("step", ""))), self.tx(uid, f"flows.{i}.touchpoints.{j}.sees")]
+            for i, f in enumerate(flows) for j, t in enumerate(f.get("touchpoints") or [])])
         details = "".join(self.part("detail", title=self.tx(uid, f"details.{i}.title"), diagram=self.diagram(d.get("diagram")), open_attr=self.open_attr())
                           for i, d in enumerate(uc.get("details") or []))
         return self.part(

@@ -345,6 +345,8 @@
       try { localStorage.setItem(KEY, doc.lang); } catch (err) { /* ignore */ }
       return;
     }
+    var tableView = e.target.closest("button[data-table-view]");
+    if (tableView) { setTableView(tableView.dataset.tableView, true); return; }
     var tog = e.target.closest("[data-target]");
     if (tog) { toggleFragments(tog); return; }
     var lv = e.target.closest("[data-level-btn]");
@@ -388,7 +390,28 @@
     if (viewerOpen() && !layoutChoice && !panes[1].el.hidden) applyLayout(true);
   });
 
+  /* narrow screens: flipped (default) or card view for the key tables; one global choice */
+  var TABLE_VIEW_KEY = "ga-table-view";
+
+  function setTableView(view, save) {
+    doc.dataset.tableView = view;
+    document.querySelectorAll("button[data-table-view]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.tableView === view)); });
+    if (!save) return;
+    try { localStorage.setItem(TABLE_VIEW_KEY, view); } catch (err) { /* ignore */ }
+  }
+
+  document.addEventListener("scroll", function (e) {
+    var box = e.target;
+    if (!box.classList || !box.classList.contains("flip-scroll")) return;
+    var set = box.parentElement;
+    set.classList.toggle("scrolled", box.scrollLeft > 8);
+    set.classList.toggle("at-end", box.scrollLeft + box.clientWidth >= box.scrollWidth - 4);
+  }, true);
+
   function init() {
+    var savedView = null;
+    try { savedView = localStorage.getItem(TABLE_VIEW_KEY); } catch (err) { /* default */ }
+    setTableView(savedView === "cards" ? "cards" : "flip", false);
     initSideIndex();
     if (document.body.classList.contains("print")) expandAllFragments();
   }

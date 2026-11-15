@@ -24,6 +24,30 @@ def run(*argv):
     return code, out.getvalue()
 
 
+def run_probe(page_html, probe_js, target, size="1200,900"):
+    """Open a rendered page in headless Edge/Chrome, run probe_js after load, return the string the probe wrote into <pre id=res>."""
+    import subprocess
+    script = ("<script>window.addEventListener('load',function(){var out=[];try{" + probe_js +
+              "}catch(e){out.push('ERROR '+e.message)};document.body.insertAdjacentHTML('afterbegin','<pre id=res>'+out.join(';')+'</pre>');});</script></body>")
+    target.write_text(page_html.replace("</body>", script), encoding="utf-8")
+    done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", f"--window-size={size}", "--virtual-time-budget=4000", "--dump-dom", target.resolve().as_uri()],
+                          capture_output=True, text=True, encoding="utf-8", timeout=90)
+    found = re.search(r'<pre id="res">([^<]*)</pre>', done.stdout)
+    if not found:
+        raise AssertionError("probe produced no result: " + done.stderr[-300:])
+    return found.group(1)
+
+
+def luminance(rgb):
+    channels = [c / 255 for c in rgb]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def contrast(a, b):
+    la, lb = sorted((luminance(a), luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
 class FixtureCase(unittest.TestCase):
     """Each test gets its own copy of the fixture so seeded errors never leak."""
 
@@ -139,11 +163,10 @@ class RenderTests(FixtureCase):
                 self.assertRegex(text, r'class="tab disabled" aria-disabled="true" tabindex="0" title="Not created yet[^"]*"')
                 self.assertEqual(text.count('class="tab disabled"'), 1)
 
-    def test_tab4_alts_have_working_toggles_and_start_hidden(self):
+    def test_tab4_fragment_toggles_start_off_and_target_the_inline_diagram(self):
         text = self.build()["tab4.html"]
-        self.assertIn('data-toggle="UC-01-bad"', text)
-        self.assertRegex(text, r'class="alt bad" data-group="UC-01-bad" hidden')
-        self.assertIn('aria-expanded="false"', text)
+        self.assertIn('data-target="uc-01" data-kind="bad" aria-pressed="false"', text)
+        self.assertRegex(text, r'<g data-block="1" data-y="\d+" data-h="\d+" data-fragment="bad-timeout" data-kind="bad" display="none">')
 
     def test_tab2_has_no_choose_buttons_and_decided_is_collapsed(self):
         text = self.build()["tab2.html"]
@@ -303,7 +326,7 @@ class ReviewRegressionTests(FixtureCase):
         run("render", str(self.dir), "--theme", str(theme), "--tabs", "tab1")
         text = (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
         self.assertIn("--accent: #123456", text)
-        self.assertNotIn("#D97757", text)
+        self.assertNotIn("--accent: #D97757", text)
         self.assertEqual(run("render", str(self.dir), "--theme", "no-such-theme")[0], 2)
         self.assertEqual(run("export-pdf", str(self.dir), "--theme", "no-such-theme", "--dry-run")[0], 2)
 
@@ -381,12 +404,12 @@ class SecondReviewRegressionTests(FixtureCase):
 class DiagramTests(unittest.TestCase):
     def test_fixture_diagrams_are_real_self_contained_svgs(self):
         svgs = sorted((FIXTURE / "diagrams").glob("*.svg"))
-        self.assertEqual(len(svgs), 23)
+        self.assertEqual(len(svgs), 33)
         for path in svgs:
             text = path.read_text(encoding="utf-8")
             with self.subTest(svg=path.name):
                 self.assertNotIn("placeholder diagram", text)
-                self.assertNotIn("<script", text)
+                self.assertEqual(sync.sanitize_svg(text)[1], [])  # no script, handler or external reference
                 self.assertNotRegex(text, r"(?:href|src)=")
                 self.assertNotIn("http://", text.replace("http://www.w3.org/2000/svg", ""))
                 self.assertIn('role="img"', text)
@@ -414,16 +437,17 @@ class ArchViewTests(FixtureCase):
         run("render", str(self.dir), "--tabs", tab)
         return (self.dir / "build" / f"{tab}.html").read_text(encoding="utf-8")
 
-    def test_each_level_with_components_gets_a_diagram_pair_and_a_switch(self):
-        for tab in ("tab5", "tab1"):
+    def test_each_overview_level_gets_a_diagram_pair_and_a_switch(self):
+        for tab, figures in (("tab5", 21), ("tab1", 5)):
             text = self.page(tab)
             with self.subTest(tab=tab):
-                self.assertEqual(re.findall(r'class="ba-cols" data-level="(L\d)"', text), ["L1", "L2", "L3"])
-                for level in ("L1", "L2", "L3"):
+                self.assertEqual(re.findall(r'class="ba-cols" data-level="(L\d)"', text), ["L1", "L2"])
+                for level in ("L1", "L2"):
                     self.assertIn(f'data-level-btn="{level}"', text)
+                self.assertNotIn('data-level-btn="L3"', text)
                 self.assertRegex(text, r'class="ba-cols" data-level="L1" hidden')
                 self.assertNotRegex(text, r'class="ba-cols" data-level="L2" hidden')
-                self.assertEqual(text.count("data:image/svg+xml;base64,"), 6 + (tab == "tab1"))
+                self.assertEqual(text.count('<figure class="diagram">'), figures)
                 self.assertIn("1 new", text)  # change summary line kept
 
     def test_tab5_keeps_component_badges(self):
@@ -435,15 +459,15 @@ class ArchViewTests(FixtureCase):
         self.assertIn("diagram-missing", self.codes()[1])
 
     def test_level_with_components_but_no_view_is_a_warning(self):
-        self.edit("registry.json", lambda d: d["views"].pop("L3"))
+        self.edit("registry.json", lambda d: d["views"].pop("L2"))
         code, codes, _ = self.codes()
         self.assertIn("view-missing", codes)
         self.assertEqual(code, 0)
 
     def test_level_without_components_needs_no_view(self):
         def change(d):
-            d["components"] = [c for c in d["components"] if c["c4_level"] != "L3"]
-            d["views"].pop("L3")
+            d["components"] = [c for c in d["components"] if c["c4_level"] != "L1"]
+            d["views"].pop("L1")
         self.edit("registry.json", change)
         self.assertNotIn("view-missing", self.codes()[1])
 
@@ -454,7 +478,7 @@ class ArchViewTests(FixtureCase):
     def test_print_shows_every_level(self):
         project = sync.load_project(self.dir)
         document = sync.Site(project, print_mode=True).print_document(["tab5"])
-        self.assertEqual(len(re.findall(r'class="ba-cols" data-level="L\d"\s*>', document)), 3)
+        self.assertEqual(len(re.findall(r'class="ba-cols" data-level="L\d"\s*>', document)), 2)
 
 
 class Tab1LayoutTests(FixtureCase):
@@ -476,7 +500,7 @@ class Tab1OutcomeTests(FixtureCase):
     def test_outcome_banner_tree_diagram_and_uc_table(self):
         text = self.page()
         self.assertRegex(text, r'<div class="banner">')
-        self.assertEqual(text.count("data:image/svg+xml;base64,"), 7)  # 6 architecture views + the use case tree
+        self.assertEqual(text.count('<figure class="diagram">'), 5)  # four overview diagrams (L1, L2 pairs) + the use case tree
         self.assertNotIn("impact sweep)", text)  # the separate affected-UC list is gone
         table = text.split('<table class="uc-table">')[1].split("</table>")[0]
         for header in ("ID", "Tier", "Plain-words summary", "Traced from", "Details"):
@@ -549,13 +573,14 @@ class DiagramViewerTests(FixtureCase):
                 self.assertIn("cursor: zoom-in", (SKILL / "templates" / "base.css").read_text(encoding="utf-8"))
         self.assertGreater(sum(t.count('class="expand"') for t in self.pages().values()), 20)
 
-    def test_diagrams_in_hidden_alt_sections_and_details_are_covered(self):
+    def test_diagrams_in_collapsed_details_and_hidden_fragments_are_covered(self):
         tab4 = self.pages()["tab4"]
-        alt = re.search(r'<div class="alt bad" data-group="UC-01-bad" hidden>.*?</figure>', tab4, re.S).group(0)
-        self.assertIn('class="expand"', alt)
         detail = re.search(r"<details class=\"card\" ><summary>[^<]*<span[^>]*>Detail.*?</details>", tab4, re.S)
         self.assertIsNotNone(detail)
         self.assertIn('class="expand"', detail.group(0))
+        uc1 = tab4.split('<section class="uc" id="UC-01">')[1].split("</section>")[0]
+        self.assertIn('display="none"', uc1)  # hidden fragments live inside the one inline diagram, which has its own button
+        self.assertEqual(uc1.count('class="expand"'), 1)
 
     def test_overlay_markup_is_in_every_page_with_all_controls(self):
         for name, text in self.pages().items():
@@ -566,7 +591,7 @@ class DiagramViewerTests(FixtureCase):
 
     def test_viewer_script_handles_keyboard_wheel_pointer_focus_and_avoids_popups(self):
         js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
-        for needle in ("Escape", "wheel", "pointerdown", "pointermove", "lastTrigger.focus()", "viewer-stage"):
+        for needle in ("Escape", "wheel", "pointerdown", "pointermove", "lastTrigger.focus()", "viewer-stage", "data-compare", "mirror("):
             self.assertIn(needle, js)
         self.assertNotIn("window.open", js)
         self.assertNotRegex(js, r"(?<!try \{ )requestFullscreen\(")
@@ -588,30 +613,18 @@ class DiagramViewerTests(FixtureCase):
 
     @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
     def test_in_browser_open_zoom_pan_close_and_focus_return(self):
-        page = self.pages()["tab3"]
-        probe = """<script>window.addEventListener('load',function(){
-var out=[],btn=document.querySelector('.expand'),v=document.getElementById('viewer'),stage=document.getElementById('viewer-stage'),img=v.querySelector('img');
+        probe = """var btn=document.querySelector('.expand'),v=document.getElementById('viewer'),stage=document.getElementById('viewer-stage'),img=v.querySelector('.viewer-img');
 btn.focus(); btn.click();
-setTimeout(function(){
- out.push('open='+(!v.hidden));
- var t0=img.style.transform;
- document.querySelector('[data-viewer=in]').click(); var t1=img.style.transform;
- out.push('zoomed='+(t1!==t0));
- stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-200,clientX:300,clientY:300,bubbles:true,cancelable:true})); out.push('wheel='+(img.style.transform!==t1));
- document.querySelector('[data-viewer=reset]').click(); out.push('reset='+(img.style.transform===t0));
- document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
- out.push('closed='+v.hidden); out.push('focus='+(document.activeElement===btn));
- btn.click(); stage.dispatchEvent(new MouseEvent('click',{bubbles:true})); out.push('backdrop='+v.hidden);
- document.body.insertAdjacentHTML('afterbegin','<pre id=res>'+out.join(';')+'</pre>');
-},400);});</script></body>"""
-        target = self.dir / "build" / "probe.html"
-        target.write_text(page.replace("</body>", probe), encoding="utf-8")
-        import subprocess
-        done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--window-size=1200,900", "--virtual-time-budget=4000", "--dump-dom", target.resolve().as_uri()],
-                              capture_output=True, text=True, encoding="utf-8", timeout=90)
-        result = re.search(r'<pre id="res">([^<]*)</pre>', done.stdout)
-        self.assertIsNotNone(result, done.stderr[-300:])
-        self.assertEqual(result.group(1), "open=true;zoomed=true;wheel=true;reset=true;closed=true;focus=true;backdrop=true")
+out.push('open='+(!v.hidden)); out.push('inline='+(img.querySelector('svg')!==null));
+var t0=img.style.transform;
+document.querySelector('[data-viewer=in]').click(); var t1=img.style.transform; out.push('zoomed='+(t1!==t0));
+stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-200,clientX:300,clientY:300,bubbles:true,cancelable:true})); out.push('wheel='+(img.style.transform!==t1));
+document.querySelector('[data-viewer=reset]').click(); out.push('reset='+(img.style.transform===t0));
+document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+out.push('closed='+v.hidden); out.push('focus='+(document.activeElement===btn));
+btn.click(); stage.dispatchEvent(new MouseEvent('click',{bubbles:true})); out.push('backdrop='+v.hidden)"""
+        result = run_probe(self.pages()["tab3"], probe, self.dir / "build" / "probe.html")
+        self.assertEqual(result, "open=true;inline=true;zoomed=true;wheel=true;reset=true;closed=true;focus=true;backdrop=true")
 
 
 class ConceptIndexTests(FixtureCase):
@@ -673,6 +686,358 @@ var tries=0;
         self.assertIsNotNone(result, done.stderr[-300:])
         self.assertEqual(result.group(1), "first=#C1;last=#C3;current=true")
 
+
+class SvgSanitizerTests(unittest.TestCase):
+    def clean(self, body, root_attrs=""):
+        return sync.sanitize_svg(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"{root_attrs}>{body}</svg>')
+
+    def test_script_foreignobject_and_style_elements_are_removed(self):
+        clean, problems = self.clean('<script>alert(1)</script><foreignObject><div>x</div></foreignObject><style>*{}</style><rect width="1" height="1"/>')
+        self.assertNotIn("script", clean)
+        self.assertNotIn("foreignObject", clean)
+        self.assertNotIn("<style", clean)
+        self.assertIn("<rect", clean)
+        self.assertEqual(len(problems), 3)
+
+    def test_event_handler_and_javascript_attributes_are_removed(self):
+        clean, problems = self.clean('<rect onclick="alert(1)" onload="x()" width="1" height="1" fill="javascript:alert(1)"/>', ' onload="alert(2)"')
+        self.assertNotRegex(clean, r"on(click|load)=")
+        self.assertNotIn("javascript", clean)
+        self.assertGreaterEqual(len(problems), 4)
+
+    def test_external_references_are_removed_but_local_ones_stay(self):
+        clean, problems = self.clean('<use href="https://evil.example/x.svg#a"/><rect fill="url(https://evil.example/p)" width="1" height="1"/>'
+                                     '<path d="M0 0" marker-end="url(#m)"/><marker id="m"/>')
+        self.assertNotIn("evil.example", clean)
+        self.assertIn("url(#m)", clean)
+        self.assertTrue(problems)
+
+    def test_doctype_entities_and_non_svg_roots_are_refused(self):
+        self.assertEqual(sync.sanitize_svg('<!DOCTYPE svg [<!ENTITY a "b">]><svg xmlns="http://www.w3.org/2000/svg"/>')[0], "")
+        self.assertEqual(sync.sanitize_svg("<html/>")[0], "")
+        self.assertEqual(sync.sanitize_svg("<svg")[0], "")
+
+    def test_clean_input_has_no_problems(self):
+        clean, problems = self.clean('<g><text x="1" y="1">hi</text></g>')
+        self.assertEqual(problems, [])
+        self.assertIn("hi", clean)
+
+
+class InlineDiagramTests(FixtureCase):
+    def pages(self):
+        run("render", str(self.dir))
+        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+
+    def test_diagrams_are_inline_svg_not_images(self):
+        for name, text in self.pages().items():
+            with self.subTest(page=name):
+                self.assertNotIn("data:image/svg+xml", text)
+                self.assertRegex(text, r'<figure class="diagram"><span class="diagram-frame" style="max-width:\d+px"><svg ')
+                self.assertNotRegex(text.split("<main>")[1], r"<figure class=\"diagram\">.*?<img")
+
+    def test_unsafe_svg_is_rejected_by_validate_and_stripped_by_render(self):
+        path = self.dir / "diagrams" / "concept-c1.svg"
+        svg = path.read_text(encoding="utf-8").replace("</defs>", '</defs><script>alert(1)</script><rect onclick="x()" width="1" height="1"/>', 1)
+        path.write_text(svg, encoding="utf-8")
+        code, codes, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("unsafe-svg", codes)
+        run("render", str(self.dir), "--tabs", "tab3")
+        page = (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        self.assertNotIn("alert(1)", page)
+        self.assertNotIn("onclick", page)
+
+    def test_diagram_text_is_at_least_11px(self):
+        for path in (FIXTURE / "diagrams").glob("*.svg"):
+            sizes = [float(n) for n in re.findall(r'font-size="([\d.]+)"', path.read_text(encoding="utf-8"))]
+            with self.subTest(svg=path.name):
+                self.assertTrue(sizes)
+                self.assertGreaterEqual(min(sizes), 11)
+
+    def test_invalid_svg_xml_is_an_error_and_a_placeholder(self):
+        (self.dir / "diagrams" / "concept-c1.svg").write_text("<svg", encoding="utf-8")
+        self.assertIn("unsafe-svg", self.codes()[1])
+        run("render", str(self.dir), "--tabs", "tab3")
+        self.assertIn("Diagram not found", (self.dir / "build" / "tab3.html").read_text(encoding="utf-8"))
+
+
+class UcFragmentTests(FixtureCase):
+    def tab4(self):
+        run("render", str(self.dir), "--tabs", "tab4")
+        return (self.dir / "build" / "tab4.html").read_text(encoding="utf-8")
+
+    def test_one_diagram_per_uc_with_every_flow_as_a_hidden_fragment(self):
+        text = self.tab4()
+        for uid, expected in (("UC-01", 4), ("UC-02", 4), ("UC-03", 3)):
+            section = text.split(f'<section class="uc" id="{uid}">')[1].split("</section>")[0] if False else text.split(f'<section class="uc" id="{uid}">')[1].split('<div class="grid3">')[0]
+            with self.subTest(uc=uid):
+                self.assertEqual(section.count('<figure class="diagram">'), 1)
+                self.assertEqual(len(re.findall(r'data-fragment="[^"]+" data-kind="(?:bad|edge)" display="none"', section)), expected)
+
+    def test_minimum_scenarios_per_uc(self):
+        data = json.loads((self.dir / "usecases.json").read_text(encoding="utf-8"))
+        counts = {u["id"]: ({k: sum(1 for f in u["flows"] if f["kind"] == k) for k in ("bad", "edge")}) for u in data["ucs"]}
+        self.assertGreaterEqual(counts["UC-01"]["bad"], 2)
+        self.assertGreaterEqual(counts["UC-01"]["edge"], 2)
+        self.assertGreaterEqual(counts["UC-02"]["bad"], 2)
+        self.assertGreaterEqual(counts["UC-02"]["edge"], 2)
+        self.assertGreaterEqual(counts["UC-03"]["bad"], 1)
+        self.assertGreaterEqual(counts["UC-03"]["edge"], 2)
+
+    def test_group_and_per_fragment_toggles_and_one_touchpoint_row_per_scenario(self):
+        text = self.tab4()
+        section = text.split('<section class="uc" id="UC-01">')[1].split("</section>")[0]
+        self.assertIn('data-target="uc-01" data-kind="bad" aria-pressed="false"', section)
+        self.assertIn('data-target="uc-01" data-kind="edge" aria-pressed="false"', section)
+        self.assertEqual(len(re.findall(r'data-fragment="[^"]+" aria-pressed="false"', section)), 4)
+        self.assertEqual(section.count('<tr><td>') - 0, 5)
+        self.assertIn("Zero projects", section)
+
+    def test_missing_fragment_and_missing_diagram_are_errors(self):
+        path = self.dir / "diagrams" / "uc-01.svg"
+        path.write_text(path.read_text(encoding="utf-8").replace('data-fragment="bad-db"', 'data-fragment="renamed"'), encoding="utf-8")
+        code, codes, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("no-fragment", codes)
+        self.assertIn("bad-db", out)
+        self.setUp()
+        self.edit("usecases.json", lambda d: d["ucs"][0].pop("diagram"))
+        self.assertIn("no-diagram", self.codes()[1])
+
+    def test_duplicate_flow_ids_are_an_error(self):
+        self.edit("usecases.json", lambda d: d["ucs"][0]["flows"].append(dict(d["ucs"][0]["flows"][1])))
+        self.assertIn("duplicate-id", self.codes()[1])
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_fragments_show_hide_in_place_and_the_diagram_reflows(self):
+        probe = """var svg=document.getElementById('uc-01'); var h0=svg.viewBox.baseVal.height;
+var kind=document.querySelector('[data-target=uc-01][data-kind=bad]');
+kind.click(); var h1=svg.viewBox.baseVal.height;
+out.push('grew='+(h1>h0)); out.push('badshown='+svg.querySelectorAll('[data-fragment][data-kind=bad]:not([display=none])').length);
+out.push('pressed='+kind.getAttribute('aria-pressed')); out.push('edgeshown='+svg.querySelectorAll('[data-fragment][data-kind=edge]:not([display=none])').length);
+var one=document.querySelector('[data-target=uc-01][data-fragment=edge-empty]'); one.click(); var h2=svg.viewBox.baseVal.height;
+out.push('one='+(h2>h1)+'/'+one.getAttribute('aria-pressed'));
+kind.click(); out.push('collapsed='+(svg.viewBox.baseVal.height<h2));
+one.click(); out.push('back='+(svg.viewBox.baseVal.height===h0));
+var lines=svg.querySelectorAll('[data-lifeline]'); out.push('lifelines='+(+lines[0].getAttribute('y2')<h0))"""
+        result = run_probe(self.tab4(), probe, self.dir / "build" / "probe-frag.html")
+        self.assertEqual(result, "grew=true;badshown=2;pressed=true;edgeshown=0;one=true/true;collapsed=true;back=true;lifelines=true")
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_print_document_shows_every_fragment(self):
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(["tab4"])
+        (self.dir / "build").mkdir(exist_ok=True)
+        result = run_probe(document, "out.push('hidden='+document.querySelectorAll('svg [data-fragment][display=none]').length);out.push('frags='+document.querySelectorAll('svg [data-fragment]').length)",
+                           self.dir / "build" / "probe-print.html")
+        self.assertEqual(result, "hidden=0;frags=11")
+
+
+class ContainerL3Tests(FixtureCase):
+    def tab5(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+
+    def test_overview_switch_offers_l1_and_l2_only(self):
+        text = self.tab5()
+        self.assertEqual(re.findall(r'data-level-btn="(L\d)"', text), ["L1", "L2"])
+        self.assertEqual(re.findall(r'class="ba-cols" data-level="(L\d)"', text), ["L1", "L2"])
+
+    def test_container_card_holds_the_l3_before_after_with_expand_both(self):
+        text = self.tab5()
+        card = re.search(r'<details class="card comp unchanged" id="CMP-API"[^>]*>.*?</details>\s*<details', text, re.S).group(0)
+        self.assertIn("Inside API (C4 L3)", card)
+        self.assertEqual(card.count('<figure class="diagram">'), 2)
+        self.assertIn('class="expand-both"', card)
+        self.assertIn('class="badge unchanged"', card)
+        self.assertNotRegex(card.split(">")[0] + ">", r"\bopen\b")  # compact: collapsed by default
+        self.assertNotIn("CMP-API-READ", text.split('id="CMP-API"')[0])  # the L3 component has no card of its own
+
+    def test_l3_view_in_global_views_is_an_error(self):
+        self.edit("registry.json", lambda d: d["views"].update(L3={"before": "diagrams/x.svg", "after": "diagrams/y.svg"}))
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("l3-not-global", codes)
+
+    def test_l3_component_must_declare_an_l2_parent(self):
+        def comp(d):
+            return next(c for c in d["components"] if c["id"] == "CMP-API-READ")
+        self.edit("registry.json", lambda d: comp(d).pop("parent"))
+        self.assertIn("l3-no-parent", self.codes()[1])
+        self.setUp()
+        self.edit("registry.json", lambda d: comp(d).update(parent="CMP-NOPE"))
+        self.assertIn("l3-bad-parent", self.codes()[1])
+        self.setUp()
+        self.edit("registry.json", lambda d: comp(d).update(parent="CMP-SYS"))  # an L1 system is not a container
+        self.assertIn("l3-bad-parent", self.codes()[1])
+
+    def test_container_with_l3_components_but_no_view_is_a_warning(self):
+        def change(d):
+            next(c for c in d["components"] if c["id"] == "CMP-API").pop("views")
+        self.edit("registry.json", change)
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("view-missing", codes)
+        self.assertIn("CMP-API", out)
+
+
+class ComponentDiagramTests(FixtureCase):
+    def tab5(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+
+    def card(self, text, cid):
+        return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details|</section>)', text, re.S).group(0)
+
+    def test_every_changing_component_has_diagrams_at_the_top_of_its_card(self):
+        text = self.tab5()
+        for cid in ("CMP-SYS", "CMP-WEB", "CMP-DB", "CMP-QUEUE", "CMP-CRON", "CMP-AGG"):
+            card = self.card(text, cid)
+            with self.subTest(component=cid):
+                body = card.split('<div class="comp-body">')[1]
+                self.assertTrue(body.lstrip().startswith('<div class="ba-cols"'))
+                self.assertLess(body.index("<figure"), body.index("What changes") if "What changes" in body else len(body))
+
+    def test_db_has_an_er_extra_and_queue_a_topology_extra(self):
+        text = self.tab5()
+        self.assertIn("Schema diff (ER)", self.card(text, "CMP-DB"))
+        self.assertIn('id="er-projects-db"', self.card(text, "CMP-DB"))
+        self.assertIn("Topology", self.card(text, "CMP-QUEUE"))
+        self.assertIn('id="queue-topology"', self.card(text, "CMP-QUEUE"))
+
+    def test_web_app_has_an_optional_freshness_flowchart(self):
+        card = self.card(self.tab5(), "CMP-WEB")
+        self.assertIn("Freshness label", card)
+        self.assertIn('id="flow-freshness"', card)
+
+    def test_missing_component_diagrams_warn_but_flowchart_is_optional(self):
+        def change(d):
+            comps = {c["id"]: c for c in d["components"]}
+            comps["CMP-WEB"]["change"]["diagrams"].pop("flowchart")
+            comps["CMP-AGG"]["change"]["diagrams"].pop("before")
+            comps["CMP-DB"]["change"]["diagrams"].pop("extra")
+        self.edit("registry.json", change)
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertEqual(codes - {"th-stale"}, {"component-view-missing", "component-extra-missing"})  # removing the flowchart also changes the translated text
+        self.assertEqual([line for line in out.splitlines() if "CMP-WEB" in line and "component-" in line], [])
+
+    def test_flowchart_needs_title_and_diagram(self):
+        def change(d):
+            next(c for c in d["components"] if c["id"] == "CMP-WEB")["change"]["diagrams"]["flowchart"][0].pop("title")
+        self.edit("registry.json", change)
+        self.assertIn("flowchart-incomplete", self.codes()[1])
+
+    def test_flowchart_title_has_thai_and_is_in_the_translation_check(self):
+        self.edit("registry.json", lambda d: next(c for c in d["components"] if c["id"] == "CMP-WEB")["change"]["diagrams"]["flowchart"][0].update(title="Freshness rules"))
+        self.assertIn("th-stale", self.codes()[1])
+
+    def test_er_diagram_shows_tables_columns_keys_and_cardinality(self):
+        svg = (FIXTURE / "diagrams" / "comp-cmp-db-extra.svg").read_text(encoding="utf-8")
+        for needle in ("users", "projects", "status_history", "status_updated_at", "last_export_at", "project_id", "lead_id", "changed_by", ">PK<", ">FK<", "zero or many", "<circle"):
+            self.assertIn(needle, svg)
+        self.assertIn("stroke-dasharray", svg)  # a removed column / new relationship is styled
+
+
+class PairCompareTests(FixtureCase):
+    def tab5(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+
+    def test_every_pair_has_an_expand_both_button_and_print_has_none(self):
+        text = self.tab5()
+        pairs = text.count('<div class="ba-cols"')
+        self.assertEqual(text.count('class="expand-both" data-compare'), pairs)
+        self.assertEqual(pairs, 2 + 6 + 1)  # L1 + L2 overview, six changing components, the API's L3
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(["tab5"])
+        self.assertNotIn('class="expand-both"', document)
+
+    def test_pairs_stack_below_1500px_and_viewer_stacks_in_portrait(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertIn("@media (max-width: 1500px) { .ba-cols { grid-template-columns: 1fr; } }", css)
+        self.assertIn("max-aspect-ratio: 1/1", css)
+        self.assertIn(".viewer-panes { flex-direction: column; }", css)
+
+    def test_compare_labels_and_sync_button_are_in_every_page(self):
+        text = self.tab5()
+        self.assertIn('data-viewer="sync"', text)
+        self.assertIn("Expand both", text)
+        self.assertIn("ขยายทั้งคู่", text)
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_compare_synced_zoom_unsync_close_and_focus(self):
+        probe = """var btn=document.querySelector('.ba-cols:not([hidden]) .expand-both'); btn.focus(); btn.click();
+var v=document.getElementById('viewer'), panes=v.querySelectorAll('.viewer-pane'), imgs=v.querySelectorAll('.viewer-img');
+out.push('open='+(!v.hidden)); out.push('two='+(!panes[1].hidden));
+out.push('labels='+Array.prototype.map.call(v.querySelectorAll('.pane-label'),function(l){return l.textContent}).join('/'));
+function same(){return imgs[0].style.transform===imgs[1].style.transform}
+out.push('start='+same());
+document.querySelector('[data-viewer=in]').click(); out.push('buttons='+same());
+var stage=panes[0].querySelector('.viewer-stage');
+stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true})); out.push('wheel='+same());
+var sy=document.querySelector('[data-viewer=sync]'); sy.click(); out.push('unsynced='+sy.getAttribute('aria-pressed'));
+stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true})); out.push('independent='+(!same()));
+sy.click(); out.push('relinked='+same());
+document.querySelector('[data-viewer=reset]').click(); out.push('fit='+same());
+document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); out.push('closed='+v.hidden); out.push('focus='+(document.activeElement===btn));
+btn.click(); document.querySelector('[data-viewer=close]').click(); out.push('xclose='+v.hidden);
+var one=document.querySelector('.diagram .expand'); one.click(); out.push('single='+(!v.hidden)+'/'+panes[1].hidden); document.querySelector('[data-viewer=close]').click()"""
+        result = run_probe(self.tab5(), probe, self.dir / "build" / "probe-compare.html", "1300,1000")
+        self.assertEqual(result, "open=true;two=true;labels=Before/After;start=true;buttons=true;wheel=true;unsynced=false;independent=true;relinked=true;fit=true;closed=true;focus=true;xclose=true;single=true/true")
+
+
+class OptionCardContrastTests(FixtureCase):
+    def test_option_card_css_uses_surface_and_normal_text(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.opt\.chosen, \.opt\.open, \.opt\.deferred, \.opt\.rejected \{ background: var\(--surface\); color: var\(--fg\); \}")
+        self.assertRegex(css, r"\.opt\.chosen \{ border: 2px solid var\(--chosen-bd\); \}")
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_every_option_state_and_badge_has_readable_contrast(self):
+        run("render", str(self.dir), "--tabs", "tab2")
+        page = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        probe = """function bg(el){while(el){var c=getComputedStyle(el).backgroundColor; if(c&&c!=='rgba(0, 0, 0, 0)'&&c!=='transparent')return c; el=el.parentElement} return 'rgb(255, 255, 255)'}
+document.querySelectorAll('details.decision').forEach(function(d){d.open=true});
+document.querySelectorAll('.opt, .opt .badge').forEach(function(el){
+ var st=(el.className.match(/(chosen|open|deferred|rejected)/)||[])[1];
+ out.push((el.classList.contains('badge')?'badge':'opt')+'|'+st+'|'+getComputedStyle(el).color+'|'+bg(el))})"""
+        samples = run_probe(page, probe, self.dir / "build" / "probe-contrast.html").split(";")
+        seen = set()
+        for sample in samples:
+            kind, state, fg, bg = sample.split("|")
+            rgb = lambda s: [int(float(x)) for x in re.findall(r"[\d.]+", s)[:3]]  # noqa: E731
+            ratio = contrast(rgb(fg), rgb(bg))
+            seen.add((kind, state))
+            with self.subTest(kind=kind, state=state):
+                self.assertGreaterEqual(ratio, 4.5, f"{kind} {state}: {fg} on {bg} = {ratio:.2f}")
+        self.assertTrue({("opt", "chosen"), ("opt", "rejected"), ("opt", "deferred"), ("opt", "open"), ("badge", "chosen")} <= seen)
+
+
+class LayoutRuleTests(FixtureCase):
+    def test_concept_block_is_header_then_full_width_diagram_then_text(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.blk \{ display: flex; flex-direction: column;")
+        self.assertRegex(css, r"\.blk \.tx \{[^}]*max-width: 70ch")
+        run("render", str(self.dir), "--tabs", "tab3")
+        text = (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        block = text.split('<article class="card blk" id="C1">')[1].split("</article>")[0]
+        self.assertLess(block.index("<header"), block.index('<div class="dg">'))
+        self.assertLess(block.index('<div class="dg">'), block.index('<div class="tx">'))
+        self.assertIn("<h2>", block.split('<div class="dg">')[0])
+
+    def test_diagram_frames_fill_the_column_up_to_natural_width(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.diagram-frame \{[^}]*width: 100%")
+        self.assertRegex(css, r"\.diagram-frame > svg \{[^}]*width: 100%[^}]*cursor: zoom-in")
+
+    def test_decision_option_grid_is_at_least_280px_and_wireframes_are_expandable(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertIn("minmax(280px, 1fr)); gap: 12px; margin: 10px 0; }", css)
+        run("render", str(self.dir), "--tabs", "tab2")
+        text = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        d3 = text.split('id="D3"')[1]
+        self.assertGreaterEqual(d3.count('class="expand"'), 2)
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

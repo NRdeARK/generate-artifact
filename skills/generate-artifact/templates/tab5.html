@@ -5,13 +5,20 @@
 <details class="card comp {{status}}" id="{{id}}" {{open_attr}}>
   <summary><strong>{{name}}</strong> {{badge}} <span class="muted">C4 {{level}}</span></summary>
   <div class="comp-body">
-    <div><span class="lbl">{{ui:t5.what}}</span>{{what}}</div>
-    <div><span class="lbl">{{ui:t5.why}}</span>{{why}} <span class="muted">{{ui:t5.links}} {{links}}</span></div>
-    {{data}}
-    {{infra}}
-    {{files}}
+    {{views}}
+    {{extra}}
+    {{flowcharts}}
+    {{inside}}
+    {{detail}}
   </div>
 </details>
+<!--/part-->
+<!--part:component_detail-->
+<div><span class="lbl">{{ui:t5.what}}</span>{{what}}</div>
+<div><span class="lbl">{{ui:t5.why}}</span>{{why}} <span class="muted">{{ui:t5.links}} {{links}}</span></div>
+{{data}}
+{{infra}}
+{{files}}
 <!--/part-->
 <!--part:data_table-->
 <div><span class="lbl">{{ui:t5.data}}</span><table><tr><th>{{ui:col.object}}</th><th>{{ui:col.change}}</th><th>{{ui:col.migration}}</th></tr>{{rows}}</table></div>

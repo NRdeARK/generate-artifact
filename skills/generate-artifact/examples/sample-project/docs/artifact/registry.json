@@ -1,60 +1,243 @@
 {
   "components": [
-    {"id": "CMP-SYS", "name": "Status Board", "kind": "system", "c4_level": "L1", "status": "changed",
-     "change": {
-       "what": "The system now takes status updates as events, shows them on one page and keeps the weekly email.",
-       "why": "Together these changes give everyone fresh status while managers still get their weekly summary.",
-       "ucs": ["UC-01", "UC-02", "UC-03"], "decisions": ["D1"],
-       "waive": {"files": "System-level view; the file changes are listed on its containers."}
-     }},
-    {"id": "CMP-EMAIL", "name": "Email service", "c4_level": "L1", "status": "unchanged"},
-    {"id": "CMP-WEB", "name": "Web app", "c4_level": "L2", "status": "changed",
-     "change": {
-       "what": "New status page that lists every project and shows how fresh each status is.",
-       "why": "UC-01 needs a single page with a freshness label; the old app only had a per-project view.",
-       "ucs": ["UC-01", "UC-02"], "decisions": ["D3"],
-       "files": ["web/src/pages/StatusPage.tsx", "web/src/components/StatusCard.tsx", "web/src/api/projects.ts"]
-     }},
-    {"id": "CMP-API", "name": "API", "c4_level": "L2", "status": "unchanged"},
-    {"id": "CMP-API-READ", "name": "Status read handler", "c4_level": "L3", "status": "unchanged"},
-    {"id": "CMP-DB", "name": "Projects DB", "kind": "db", "c4_level": "L2", "status": "changed",
-     "change": {
-       "what": "Adds a status timestamp and an append-only status history table.",
-       "why": "Freshness needs a timestamp, and keeping history replaces the manual spreadsheet record.",
-       "ucs": ["UC-01", "UC-03"], "decisions": ["D1"],
-       "data": [
-         {"object": "projects", "change": "+ status_updated_at", "migration": "0042_add_status_ts"},
-         {"object": "status_history", "change": "new table", "migration": "0043_history"}
-       ],
-       "infra": [{"item": "Read replicas", "before": 0, "after": 1}],
-       "files": ["db/migrations/0042_add_status_ts.sql", "db/migrations/0043_history.sql"]
-     }},
-    {"id": "CMP-QUEUE", "name": "Event queue", "c4_level": "L2", "status": "changed",
-     "change": {
-       "what": "Status updates now flow as events instead of waiting for the weekly batch.",
-       "why": "UC-02 must reach every viewer in under 10 seconds, which a batch cannot do.",
-       "ucs": ["UC-02"], "decisions": ["D1", "D2"],
-       "infra": [{"item": "Queues", "before": 0, "after": 1}, {"item": "Dead-letter queue", "before": 0, "after": 1}],
-       "files": ["infra/queue.tf"]
-     }},
-    {"id": "CMP-CRON", "name": "Cron export", "c4_level": "L2", "status": "removed",
-     "change": {
-       "what": "The weekly spreadsheet-to-email job is switched off.",
-       "why": "The Aggregator builds the weekly report from status history, so the cron job has nothing left to do.",
-       "ucs": ["UC-03"], "decisions": ["D1"],
-       "files": ["jobs/weekly_export.py"]
-     }},
-    {"id": "CMP-AGG", "name": "Aggregator", "c4_level": "L2", "status": "new",
-     "change": {
-       "what": "A worker that reads status events, writes the latest status and history, and builds the weekly report.",
-       "why": "Something has to turn events into stored status and the weekly report once the cron job is gone.",
-       "ucs": ["UC-02", "UC-03"], "decisions": ["D1", "D2"],
-       "files": ["aggregator/main.py", "aggregator/report.py", "aggregator/handlers.py", "aggregator/tests/test_handlers.py"]
-     }}
+    {
+      "id": "CMP-SYS",
+      "name": "Status Board",
+      "kind": "system",
+      "c4_level": "L1",
+      "status": "changed",
+      "change": {
+        "what": "The system now takes status updates as events, shows them on one page and keeps the weekly email.",
+        "why": "Together these changes give everyone fresh status while managers still get their weekly summary.",
+        "ucs": [
+          "UC-01",
+          "UC-02",
+          "UC-03"
+        ],
+        "decisions": [
+          "D1"
+        ],
+        "waive": {
+          "files": "System-level view; the file changes are listed on its containers."
+        },
+        "diagrams": {
+          "before": "diagrams/comp-cmp-sys-before.svg",
+          "after": "diagrams/comp-cmp-sys-after.svg"
+        }
+      }
+    },
+    {
+      "id": "CMP-EMAIL",
+      "name": "Email service",
+      "c4_level": "L1",
+      "status": "unchanged"
+    },
+    {
+      "id": "CMP-WEB",
+      "name": "Web app",
+      "c4_level": "L2",
+      "status": "changed",
+      "change": {
+        "what": "New status page that lists every project and shows how fresh each status is.",
+        "why": "UC-01 needs a single page with a freshness label; the old app only had a per-project view.",
+        "ucs": [
+          "UC-01",
+          "UC-02"
+        ],
+        "decisions": [
+          "D3"
+        ],
+        "files": [
+          "web/src/pages/StatusPage.tsx",
+          "web/src/components/StatusCard.tsx",
+          "web/src/api/projects.ts"
+        ],
+        "diagrams": {
+          "before": "diagrams/comp-cmp-web-before.svg",
+          "after": "diagrams/comp-cmp-web-after.svg",
+          "flowchart": [
+            {
+              "title": "Freshness label",
+              "diagram": "diagrams/comp-cmp-web-flow-freshness.svg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "CMP-API",
+      "name": "API",
+      "c4_level": "L2",
+      "status": "unchanged",
+      "views": {
+        "L3": {
+          "before": "diagrams/arch-cmp-api-L3-before.svg",
+          "after": "diagrams/arch-cmp-api-L3-after.svg"
+        }
+      }
+    },
+    {
+      "id": "CMP-API-READ",
+      "name": "Status read handler",
+      "c4_level": "L3",
+      "status": "unchanged",
+      "parent": "CMP-API"
+    },
+    {
+      "id": "CMP-DB",
+      "name": "Projects DB",
+      "kind": "db",
+      "c4_level": "L2",
+      "status": "changed",
+      "change": {
+        "what": "Adds a status timestamp and an append-only status history table.",
+        "why": "Freshness needs a timestamp, and keeping history replaces the manual spreadsheet record.",
+        "ucs": [
+          "UC-01",
+          "UC-03"
+        ],
+        "decisions": [
+          "D1"
+        ],
+        "data": [
+          {
+            "object": "projects.status_updated_at",
+            "change": "+ column (timestamptz)",
+            "migration": "0042_add_status_ts"
+          },
+          {
+            "object": "projects.status",
+            "change": "text -> enum",
+            "migration": "0042_add_status_ts"
+          },
+          {
+            "object": "projects.last_export_at",
+            "change": "- column removed",
+            "migration": "0044_drop_export_ts"
+          },
+          {
+            "object": "status_history",
+            "change": "new table, FKs to projects and users",
+            "migration": "0043_history"
+          }
+        ],
+        "infra": [
+          {
+            "item": "Read replicas",
+            "before": 0,
+            "after": 1
+          }
+        ],
+        "files": [
+          "db/migrations/0042_add_status_ts.sql",
+          "db/migrations/0043_history.sql",
+          "db/migrations/0044_drop_export_ts.sql"
+        ],
+        "diagrams": {
+          "before": "diagrams/comp-cmp-db-before.svg",
+          "after": "diagrams/comp-cmp-db-after.svg",
+          "extra": "diagrams/comp-cmp-db-extra.svg"
+        }
+      }
+    },
+    {
+      "id": "CMP-QUEUE",
+      "name": "Event queue",
+      "c4_level": "L2",
+      "status": "changed",
+      "change": {
+        "what": "Status updates now flow as events instead of waiting for the weekly batch.",
+        "why": "UC-02 must reach every viewer in under 10 seconds, which a batch cannot do.",
+        "ucs": [
+          "UC-02"
+        ],
+        "decisions": [
+          "D1",
+          "D2"
+        ],
+        "infra": [
+          {
+            "item": "Dead-letter queue",
+            "before": 0,
+            "after": 1
+          },
+          {
+            "item": "Payload version",
+            "before": "v1",
+            "after": "v2"
+          }
+        ],
+        "files": [
+          "infra/queue.tf"
+        ],
+        "diagrams": {
+          "before": "diagrams/comp-cmp-queue-before.svg",
+          "after": "diagrams/comp-cmp-queue-after.svg",
+          "extra": "diagrams/comp-cmp-queue-extra.svg"
+        }
+      },
+      "kind": "queue"
+    },
+    {
+      "id": "CMP-CRON",
+      "name": "Cron export",
+      "c4_level": "L2",
+      "status": "removed",
+      "change": {
+        "what": "The weekly spreadsheet-to-email job is switched off.",
+        "why": "The Aggregator builds the weekly report from status history, so the cron job has nothing left to do.",
+        "ucs": [
+          "UC-03"
+        ],
+        "decisions": [
+          "D1"
+        ],
+        "files": [
+          "jobs/weekly_export.py"
+        ],
+        "diagrams": {
+          "before": "diagrams/comp-cmp-cron-before.svg",
+          "after": "diagrams/comp-cmp-cron-after.svg"
+        }
+      }
+    },
+    {
+      "id": "CMP-AGG",
+      "name": "Aggregator",
+      "c4_level": "L2",
+      "status": "new",
+      "change": {
+        "what": "A worker that reads status events, writes the latest status and history, and builds the weekly report.",
+        "why": "Something has to turn events into stored status and the weekly report once the cron job is gone.",
+        "ucs": [
+          "UC-02",
+          "UC-03"
+        ],
+        "decisions": [
+          "D1",
+          "D2"
+        ],
+        "files": [
+          "aggregator/main.py",
+          "aggregator/report.py",
+          "aggregator/handlers.py",
+          "aggregator/tests/test_handlers.py"
+        ],
+        "diagrams": {
+          "before": "diagrams/comp-cmp-agg-before.svg",
+          "after": "diagrams/comp-cmp-agg-after.svg"
+        }
+      }
+    }
   ],
   "views": {
-    "L1": {"before": "diagrams/arch-L1-before.svg", "after": "diagrams/arch-L1-after.svg"},
-    "L2": {"before": "diagrams/arch-L2-before.svg", "after": "diagrams/arch-L2-after.svg"},
-    "L3": {"before": "diagrams/arch-L3-before.svg", "after": "diagrams/arch-L3-after.svg"}
+    "L1": {
+      "before": "diagrams/arch-L1-before.svg",
+      "after": "diagrams/arch-L1-after.svg"
+    },
+    "L2": {
+      "before": "diagrams/arch-L2-before.svg",
+      "after": "diagrams/arch-L2-after.svg"
+    }
   }
 }

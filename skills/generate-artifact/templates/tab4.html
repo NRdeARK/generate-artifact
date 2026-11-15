@@ -20,8 +20,8 @@
   </div>
   <div class="card">
     <div class="row-between"><span class="lbl">{{ui:t4.sequence}}</span><span class="muted">{{ui:t4.sequence_note}}</span></div>
-    {{good}}
-    {{alts}}
+    <div class="toggles frag-chips">{{chips}}</div>
+    {{diagram}}
   </div>
   <div class="grid3">
     <section class="card">
@@ -37,14 +37,11 @@
   <details class="card" {{open_attr}}><summary>{{ui:t4.changetrack}}</summary>{{track}}</details>
 </section>
 <!--/part-->
-<!--part:toggle-->
-<button type="button" class="tog {{kind}}" data-toggle="{{group}}" aria-expanded="{{expanded}}">{{label}}: <span class="on-show">{{ui:t4.show}}</span><span class="on-hide">{{ui:t4.hide}}</span></button>
+<!--part:toggle_kind-->
+<button type="button" class="tog {{kind}}" data-target="{{target}}" data-kind="{{kind}}" aria-pressed="false">{{label}}: <span class="on-show">{{ui:t4.show}}</span><span class="on-hide">{{ui:t4.hide}}</span></button>
 <!--/part-->
-<!--part:alt-->
-<div class="alt {{kind}}" data-group="{{group}}" {{hidden}}>
-  <span class="lbl">alt · {{label}} · {{title}}</span>
-  {{diagram}}
-</div>
+<!--part:toggle_fragment-->
+<button type="button" class="tog small {{kind}}" data-target="{{target}}" data-fragment="{{fragment}}" aria-pressed="false">{{label}}</button>
 <!--/part-->
 <!--part:touchpoint_row-->
 <tr><td>{{scenario}}</td><td>{{step}}</td><td>{{sees}}</td></tr>

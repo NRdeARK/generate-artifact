@@ -24,13 +24,17 @@
   <div class="viewer-bar">
     <span class="viewer-caption" id="viewer-caption"></span>
     <div class="viewer-tools">
+      <button type="button" data-viewer="sync" aria-pressed="true" aria-label="{{label_sync}}" hidden>{{ui:viewer.sync}}</button>
       <button type="button" data-viewer="out" aria-label="{{label_zoom_out}}">&minus;</button>
       <button type="button" data-viewer="reset" aria-label="{{label_fit}}">{{ui:viewer.fit}}</button>
       <button type="button" data-viewer="in" aria-label="{{label_zoom_in}}">+</button>
       <button type="button" data-viewer="close" aria-label="{{label_close}}">&times;</button>
     </div>
   </div>
-  <div class="viewer-stage" id="viewer-stage"><img class="viewer-img" alt=""></div>
+  <div class="viewer-panes">
+    <div class="viewer-pane" data-pane="0"><span class="pane-label" hidden></span><div class="viewer-stage" id="viewer-stage"><div class="viewer-img"></div></div></div>
+    <div class="viewer-pane" data-pane="1" hidden><span class="pane-label" hidden></span><div class="viewer-stage"><div class="viewer-img"></div></div></div>
+  </div>
 </div>
 </body>
 </html>

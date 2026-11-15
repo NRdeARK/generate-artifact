@@ -10,7 +10,6 @@ Claude with the artifact tools (see SKILL.md), which then updates artifacts.json
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
-import base64
 import hashlib
 import html
 import json
@@ -19,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +43,7 @@ TAB_DATA_FILES = {
     "tab5": "registry.json",
 }
 C4_LEVELS = ("L1", "L2", "L3")
+OVERVIEW_LEVELS = ("L1", "L2")  # L3 = components inside ONE container, so it never joins the system-wide switch
 CHANGE_STATUSES = ("unchanged", "changed", "new", "removed")
 OPTION_STATUSES = ("chosen", "deferred", "rejected", "open")
 TIERS = ("Main", "Affected")
@@ -252,6 +253,58 @@ def reason_text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+SVG_NS = "http://www.w3.org/2000/svg"
+SVG_TAGS = {"svg", "g", "defs", "title", "desc", "rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text", "tspan", "marker"}
+ET.register_namespace("", SVG_NS)
+
+
+def sanitize_svg(text):
+    """(clean_svg, problems). Keeps drawing elements only: strips scripts, foreignObject, style elements,
+    event handlers and external references. An empty clean_svg means the file is unusable."""
+    if re.search(r"<!\s*(DOCTYPE|ENTITY)", text, re.I):
+        return "", ["DOCTYPE or ENTITY declarations are not allowed"]
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        return "", [f"not valid XML ({exc})"]
+    if root.tag != f"{{{SVG_NS}}}svg":
+        return "", ["the root element is not <svg>"]
+    problems = []
+
+    def clean(element):
+        for child in list(element):
+            name = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+            if name not in SVG_TAGS:
+                element.remove(child)
+                problems.append(f"element <{name or 'unknown'}> is not allowed")
+                continue
+            clean(child)
+        for attr in list(element.attrib):
+            local, value = attr.split("}")[-1].lower(), element.attrib[attr]
+            external = re.search(r"url\(\s*['\"]?(?!#)", value) or (local == "href" and not value.startswith("#"))
+            if local.startswith("on") or "javascript:" in value.lower() or external:
+                del element.attrib[attr]
+                problems.append(f"attribute {local} is not allowed")
+
+    clean(root)
+    return ET.tostring(root, encoding="unicode"), problems
+
+
+def read_diagram(root, rel):
+    """(clean_svg, problems) for a diagram path, or (None, [reason]) when the path or file is unusable."""
+    path, problem = resolve_diagram(root, rel)
+    if problem:
+        return None, [f"{rel} {problem}"]
+    if not path.is_file():
+        return None, [f"{rel} not found"]
+    return sanitize_svg(path.read_text(encoding="utf-8"))
+
+
+def svg_width(clean_svg):
+    match = re.search(r'viewBox="[\d.]+ [\d.]+ ([\d.]+) [\d.]+"', clean_svg)
+    return int(float(match.group(1))) if match else 0
+
+
 def resolve_diagram(root, rel):
     """(path, problem). problem is set unless rel is an .svg file path inside root. Used by validator and renderer."""
     path = Path(root) / rel
@@ -260,7 +313,6 @@ def resolve_diagram(root, rel):
     if not path.resolve().is_relative_to(Path(root).resolve()):
         return None, "points outside the project folder"
     return path, None
-
 
 def string_ids(items):
     """The IDs that are strings. Other IDs are reported by check_ids and never used as keys."""
@@ -323,11 +375,39 @@ def check_registry(project):
             out += _unknown("registry.json", cid, change.get("ucs"), known["uc"], "UC")
             out += _unknown("registry.json", cid, change.get("decisions"), known["decision"], "decision")
     views = project.registry.get("views") if isinstance(project.registry.get("views"), dict) else {}
-    for level in levels_with_components(project):
+    if "L3" in views:
+        out.append(Finding("error", "l3-not-global", "registry.json views.L3",
+                           "C4 L3 shows components inside ONE container. Move it to that container's own views.L3 (e.g. on CMP-API)."))
+    for level in overview_levels(project):
         entry = views.get(level)
         if not (isinstance(entry, dict) and entry.get("before") and entry.get("after")):
             out.append(Finding("warning", "view-missing", f"registry.json views.{level}",
                                f"level {level} has components but no before/after data-flow diagram. Add views.{level}.before and .after (diagrams/arch-{level}-before.svg)."))
+    for comp in project.components:
+        cid = comp.get("id", "?")
+        if comp.get("c4_level") == "L3":
+            parent = string_ids(project.components).get(comp.get("parent")) if isinstance(comp.get("parent"), str) else None
+            if comp.get("parent") in (None, ""):
+                out.append(Finding("error", "l3-no-parent", f"registry.json {cid}", "an L3 component must name its container in parent (e.g. CMP-API)."))
+            elif parent is None or parent.get("c4_level") != "L2":
+                out.append(Finding("error", "l3-bad-parent", f"registry.json {cid}", f"parent {comp.get('parent')!r} must be an L2 container in the registry."))
+        paths = l3_view_paths(project, comp)
+        declared = comp.get("views", {}).get("L3") if isinstance(comp.get("views"), dict) else None
+        if paths and l3_children(project, cid) and not (isinstance(declared, dict) and declared.get("before") and declared.get("after")):
+            out.append(Finding("warning", "view-missing", f"registry.json {cid} views.L3",
+                               f"{cid} has L3 components but no views.L3 before/after diagram of what is inside it."))
+        if comp.get("status") in CHANGING:
+            diagrams = (comp.get("change") or {}).get("diagrams") or {}
+            for key in ("before", "after"):
+                if not diagrams.get(key):
+                    out.append(Finding("warning", "component-view-missing", f"registry.json {cid}",
+                                       f"changing component has no change.diagrams.{key}. Add a focused {key} diagram."))
+            if comp.get("kind") in ("db", "store", "queue") and not diagrams.get("extra"):
+                out.append(Finding("warning", "component-extra-missing", f"registry.json {cid}",
+                                   f"a {comp.get('kind')} needs change.diagrams.extra (schema diff for a db/store, topology for a queue)."))
+            for fc in diagrams.get("flowchart") or []:
+                if not (fc.get("title") and fc.get("diagram")):
+                    out.append(Finding("error", "flowchart-incomplete", f"registry.json {cid}", "each flowchart needs a title and a diagram."))
     return out
 
 
@@ -366,11 +446,12 @@ def check_usecases(project):
         for flow in flows:
             if flow.get("kind") not in FLOW_KINDS:
                 out.append(Finding("error", "bad-flow-kind", where, f"flow kind '{flow.get('kind')}' must be good, bad or edge."))
-        good = [f for f in flows if f.get("kind") == "good"]
-        if not good:
+        if not any(f.get("kind") == "good" for f in flows):
             out.append(Finding("error", "no-flow", where, "UC has no good-path flow. Add flows[] with kind 'good'."))
-        elif not all(f.get("diagram") for f in good):
-            out.append(Finding("error", "no-diagram", where, "good-path flow has no sequence diagram file."))
+        if not uc.get("diagram"):
+            out.append(Finding("error", "no-diagram", where, "UC has no sequence diagram. Add diagram: one SVG with the good path and every bad/edge flow as an alt fragment."))
+        flow_ids = [f.get("id") for f in flows if isinstance(f.get("id"), str)]
+        out += [Finding("error", "duplicate-id", f"{where} flows", f"flow id {i!r} used twice.") for i in sorted({i for i in flow_ids if flow_ids.count(i) > 1})]
     for outcome in project.usecases["outcomes"]:
         out += _unknown("usecases.json", outcome.get("id", "outcome"), outcome.get("ucs"), known["uc"], "UC")
     crud = project.usecases["crud"]
@@ -447,9 +528,23 @@ def check_artifacts(project):
             if isinstance(entry, dict) and entry.get("url") and not safe_url(entry["url"])]
 
 
-def levels_with_components(project):
-    return [lv for lv in C4_LEVELS if any(c.get("c4_level") == lv for c in project.components)]
+def overview_levels(project):
+    """Levels offered by the system-wide overview switch (Tab 1 and Tab 5): L1 and L2 only."""
+    return [lv for lv in OVERVIEW_LEVELS if any(c.get("c4_level") == lv for c in project.components)]
 
+
+def l3_children(project, container_id):
+    return [c for c in project.components if c.get("c4_level") == "L3" and c.get("parent") == container_id]
+
+
+def l3_view_paths(project, comp):
+    """(before, after) for the L3 view inside one container, or None when it has no L3 components or views."""
+    declared = (comp.get("views") or {}).get("L3") if isinstance(comp.get("views"), dict) else None
+    if not declared and not l3_children(project, comp.get("id")):
+        return None
+    declared = declared if isinstance(declared, dict) else {}
+    stem = str(comp.get("id", "")).lower()
+    return (declared.get("before") or f"diagrams/arch-{stem}-L3-before.svg", declared.get("after") or f"diagrams/arch-{stem}-L3-after.svg")
 
 def uc_tree_path(project):
     return project.usecases.get("tree_diagram") or "diagrams/uc-tree.svg"
@@ -468,18 +563,26 @@ def diagram_refs(project):
     refs = [("intent", INTENT_DIAGRAM)] if project.intent else []
     if project.ucs:
         refs.append(("use case tree", uc_tree_path(project)))
-    for level in levels_with_components(project):
+    for level in overview_levels(project):
         refs += zip((f"{level} view before", f"{level} view after"), view_paths(project.registry, level))
+    for comp in project.components:
+        cid = comp.get("id")
+        paths = l3_view_paths(project, comp)
+        if paths:
+            refs += zip((f"{cid} L3 before", f"{cid} L3 after"), paths)
+        diagrams = (comp.get("change") or {}).get("diagrams") or {}
+        refs += [(f"{cid} {key}", diagrams[key]) for key in ("before", "after", "extra") if diagrams.get(key)]
+        refs += [(f"{cid} flowchart", fc["diagram"]) for fc in diagrams.get("flowchart") or [] if fc.get("diagram")]
     if project.decisions.get("tree_diagram"):
         refs.append(("decisions tree", project.decisions["tree_diagram"]))
     for dec in project.decision_list:
         refs += [(f"{dec.get('id')}/{o.get('id')}", o["wireframe"]) for o in dec.get("options", []) if o.get("wireframe")]
     refs += [(c.get("id"), c["diagram"]) for c in project.concept_list if c.get("diagram")]
     for uc in project.ucs:
-        refs += [(f"{uc.get('id')} {f.get('kind')}", f["diagram"]) for f in uc.get("flows", []) if f.get("diagram")]
+        if uc.get("diagram"):
+            refs.append((f"{uc.get('id')} diagram", uc["diagram"]))
         refs += [(f"{uc.get('id')} detail", d["diagram"]) for d in uc.get("details", []) if d.get("diagram")]
     return refs
-
 
 def check_diagrams(project):
     out = []
@@ -489,8 +592,20 @@ def check_diagrams(project):
             out.append(Finding("error", "bad-diagram-path", where, f"{rel} {problem}. Diagrams must be .svg files inside {project.root}."))
         elif not path.is_file():
             out.append(Finding("warning", "diagram-missing", where, f"{rel} not found in {project.root}. Produce it with diagram-design."))
+        else:
+            clean, problems = sanitize_svg(path.read_text(encoding="utf-8"))
+            if problems:
+                out.append(Finding("error", "unsafe-svg", where, f"{rel}: {'; '.join(sorted(set(problems)))}. Re-export a plain SVG."))
+    for uc in project.ucs:
+        if not uc.get("diagram"):
+            continue
+        clean, _ = read_diagram(project.root, uc["diagram"])
+        if clean:
+            fragments = set(re.findall(r'data-fragment="([^"]+)"', clean))
+            out += [Finding("error", "no-fragment", f"usecases.json {uc.get('id')}/{flow.get('id')}",
+                            f"{uc['diagram']} has no alt fragment data-fragment=\"{flow.get('id')}\" for this {flow.get('kind')} flow.")
+                    for flow in uc.get("flows") or [] if flow.get("kind") in ("bad", "edge") and flow.get("id") not in fragments]
     return out
-
 
 def check_translations(project):
     out = [Finding("warning", f"th-{status}", f"i18n/th.json {key}",
@@ -691,14 +806,28 @@ class Site:
         return esc(self.reg.get(cid, {}).get("name", cid or "?"))
 
     def diagram(self, rel, alt=""):
+        """Inline, sanitized SVG with an expand button (placeholder box when the file is missing or unusable)."""
         if not rel:
             return ""
-        path, problem = resolve_diagram(self.p.root, rel)
-        if problem or not path.is_file():
+        clean, _ = read_diagram(self.p.root, rel)
+        if not clean:
             return self.part("diagram_missing", file=esc(rel))
-        data = base64.b64encode(path.read_bytes()).decode("ascii")
+        width = svg_width(clean)
+        end = clean.index(">")
+        head = re.sub(r'\s(?:width|height)="[^"]*"', "", clean[:end])
+        svg = f'{head} style="max-width:{width}px"{clean[end:]}' if width else clean
         expand = "" if self.print_mode else self.part("expand_button", label=esc(self.ui_plain("diagram.expand"), quote=True))
-        return self.part("diagram", src=f"data:image/svg+xml;base64,{data}", alt=esc(alt), expand=expand)
+        return self.part("diagram", svg=svg, maxw=width or 1200, expand=expand)
+
+    def svg_root_id(self, rel):
+        clean, _ = read_diagram(self.p.root, rel) if rel else (None, [])
+        match = re.search(r'<svg[^>]*\sid="([^"]+)"', clean or "")
+        return match.group(1) if match else ""
+
+    def pair(self, before_rel, after_rel, attrs=""):
+        """Before/after diagrams side by side with an 'Expand both' button (compare mode in the viewer)."""
+        compare = "" if self.print_mode else self.part("compare_button")
+        return self.part("pair", attrs=attrs, compare=compare, before=self.diagram(before_rel), after=self.diagram(after_rel))
 
     def changelog(self, ident=None, wrap=True):
         rows = git_log(self.p.root, ident)
@@ -714,15 +843,13 @@ class Site:
         return esc(" · ".join(info)) if info else self.ui("footer.uncommitted")
 
     def before_after(self, heading_key):
-        """One before/after data-flow diagram pair per C4 level that has components; the L1/L2/L3 buttons swap the pair."""
+        """One before/after data-flow pair per overview level (L1, L2); the level buttons swap the pair."""
         comps = self.p.components
         counts = {st: sum(1 for c in comps if c.get("status") == st) for st in CHANGE_STATUSES}
-        levels = levels_with_components(self.p)
+        levels = overview_levels(self.p)
         default = "L2" if "L2" in levels else (levels[0] if levels else "")
-        views = "".join(self.part(
-            "ba_view", level=level, hidden="" if self.print_mode or level == default else "hidden",
-            before=self.diagram(view_paths(self.p.registry, level)[0], f"{level} before"),
-            after=self.diagram(view_paths(self.p.registry, level)[1], f"{level} after")) for level in levels)
+        views = "".join(self.pair(*view_paths(self.p.registry, level), attrs=f'data-level="{level}" ' + ("" if self.print_mode or level == default else "hidden"))
+                        for level in levels)
         buttons = "".join(self.part("level_button", level=level, pressed=str(level == default).lower(), label=self.ui(f"level.{level}")) for level in levels)
         return self.part("before_after", heading=self.ui(heading_key), level_buttons=buttons, views=views,
                          summary=self.ui_fmt("ba.summary", **counts))
@@ -829,44 +956,54 @@ class Site:
         return dict(side_main=side["Main"], side_affected=side["Affected"], ucs="".join(self._uc(u) for u in ordered)), ""
 
     def _uc(self, uc):
-        uid, flows = uc.get("id"), uc.get("flows", [])
-        indexed = list(enumerate(flows))
-        good = next((f for _, f in indexed if f.get("kind") == "good"), {})
-        alts = "".join(self.part(
-            "alt", kind=esc(f["kind"]), group=esc(f"{uid}-{f['kind']}"), hidden="" if self.print_mode else "hidden",
-            label=self.ui(f"t4.{f['kind']}_one"), title=self.tx(uid, f"flows.{i}.title"), diagram=self.diagram(f.get("diagram"), f.get("title", "")))
-            for i, f in indexed if f.get("kind") in ("bad", "edge"))
-        toggles = "".join(self.part("toggle", kind=kind, group=esc(f"{uid}-{kind}"), expanded=str(self.print_mode).lower(), label=self.ui(f"t4.{kind}"))
+        uid, flows = uc.get("id"), uc.get("flows") or []
+        rel = uc.get("diagram")
+        target = esc(self.svg_root_id(rel), quote=True)
+        scenario = lambda i, f: f'{self.ui("scenario." + f["kind"])}: {self.tx(uid, f"flows.{i}.title")}'  # noqa: E731
+        toggles = "".join(self.part("toggle_kind", kind=kind, target=target, label=self.ui(f"t4.{kind}"))
                           for kind in ("bad", "edge") if any(f.get("kind") == kind for f in flows))
-        rows = "".join(self.part("touchpoint_row", scenario=self.ui(f"t4.{f['kind']}") if f["kind"] != "good" else self.ui("t4.good"),
-                                 step=esc(str(t.get("step", ""))), sees=self.tx(uid, f"flows.{i}.touchpoints.{j}.sees"))
-                       for i, f in indexed for j, t in enumerate(f.get("touchpoints", [])))
+        chips = "".join(self.part("toggle_fragment", kind=esc(f["kind"]), target=target, fragment=esc(str(f.get("id", "")), quote=True), label=scenario(i, f))
+                        for i, f in enumerate(flows) if f.get("kind") in ("bad", "edge"))
+        rows = "".join(self.part("touchpoint_row", scenario=scenario(i, f), step=esc(str(t.get("step", ""))), sees=self.tx(uid, f"flows.{i}.touchpoints.{j}.sees"))
+                       for i, f in enumerate(flows) for j, t in enumerate(f.get("touchpoints") or []))
         details = "".join(self.part("detail", title=self.tx(uid, f"details.{i}.title"), diagram=self.diagram(d.get("diagram")), open_attr=self.open_attr())
-                          for i, d in enumerate(uc.get("details", [])))
+                          for i, d in enumerate(uc.get("details") or []))
         return self.part(
             "uc", id=esc(uid or ""), title=self.tx(uid, "title"), tier=self.ui(f"tier.{uc.get('tier', 'Main')}"),
-            source=self.ui(f"source.{uc.get('source', 'code')}"), summary=self.tx(uid, "summary"), toggles=toggles,
-            good=self.diagram(good.get("diagram"), good.get("title", "")), alts=alts, touchpoints=rows, details=details,
-            open_attr=self.open_attr(), track=self.changelog(uid, wrap=False))
+            source=self.ui(f"source.{uc.get('source', 'code')}"), summary=self.tx(uid, "summary"), toggles=toggles, chips=chips,
+            diagram=self.diagram(rel), touchpoints=rows, details=details, open_attr=self.open_attr(), track=self.changelog(uid, wrap=False))
 
     def build_tab5(self):
-        cards = "".join(self._component(c) for c in self.p.components if c.get("status") != "unchanged")
+        cards = "".join(self._component(c) for c in self.p.components if c.get("status") != "unchanged" or l3_view_paths(self.p, c))
         return dict(overview=self.before_after("t5.overview"), components=cards, changelog=self.changelog()), ""
 
     def _component(self, comp):
-        cid, change = comp.get("id"), comp.get("change", {})
+        cid, change = comp.get("id"), comp.get("change") or {}
         status = comp.get("status", "unchanged")
-        data = "".join(self.part("row3", a=esc(r.get("object", "")), b=esc(r.get("change", "")), c=esc(r.get("migration", ""))) for r in change.get("data", []))
-        infra = "".join(self.part("row3", a=esc(r.get("item", "")), b=esc(str(r.get("before", ""))), c=esc(str(r.get("after", "")))) for r in change.get("infra", []))
-        files = change.get("files", [])
+        changing = status in CHANGING
+        diagrams = change.get("diagrams") or {}
+        titled = lambda title, diagram: self.part("titled", title=title, diagram=diagram)  # noqa: E731
+        views = self.pair(diagrams.get("before"), diagrams.get("after")) if changing and (diagrams.get("before") or diagrams.get("after")) else ""
+        kind = {"db": "db", "store": "db", "queue": "queue"}.get(comp.get("kind"), "other")
+        extra = titled(self.ui(f"t5.extra_{kind}"), self.diagram(diagrams["extra"])) if changing and diagrams.get("extra") else ""
+        flowcharts = "".join(titled(self.tx(cid, f"diagrams.flowchart.{i}.title"), self.diagram(fc.get("diagram"))) for i, fc in enumerate(diagrams.get("flowchart") or [])) if changing else ""
+        l3 = l3_view_paths(self.p, comp)
+        inside = titled(self.ui_fmt("t5.inside", name=comp.get("name", "")), self.pair(*l3)) if l3 else ""
+        detail = ""
+        if changing:
+            data = "".join(self.part("row3", a=esc(r.get("object", "")), b=esc(r.get("change", "")), c=esc(r.get("migration", ""))) for r in change.get("data", []))
+            infra = "".join(self.part("row3", a=esc(r.get("item", "")), b=esc(str(r.get("before", ""))), c=esc(str(r.get("after", "")))) for r in change.get("infra", []))
+            files = change.get("files", [])
+            detail = self.part(
+                "component_detail", what=self.tx_block(cid, "what"), why=self.tx_block(cid, "why"),
+                links=", ".join(filter(None, [self.refs(change.get("decisions")), self.refs(change.get("ucs"))])),
+                data=self.part("data_table", rows=data) if data else "", infra=self.part("infra_table", rows=infra) if infra else "",
+                files=self.part("files", open_attr=self.open_attr(), count=len(files), items="".join(self.part("file_item", path=esc(f)) for f in files)) if files else "")
         return self.part(
             "component", id=esc(cid or ""), status=esc(status), name=esc(comp.get("name", "")), level=esc(comp.get("c4_level", "")),
             open_attr="open" if status == "changed" or self.print_mode else "", badge=self.part("badge", status=esc(status), label=self.ui(f"status.{status}")),
-            what=self.tx_block(cid, "what"), why=self.tx_block(cid, "why"), links=", ".join(filter(None, [self.refs(change.get("decisions")), self.refs(change.get("ucs"))])),
-            data=self.part("data_table", rows=data) if data else "", infra=self.part("infra_table", rows=infra) if infra else "",
-            files=self.part("files", open_attr=self.open_attr(), count=len(files), items="".join(self.part("file_item", path=esc(f)) for f in files)) if files else "")
+            views=views, extra=extra, flowcharts=flowcharts, inside=inside, detail=detail)
 
-    # --- page assembly
     def content(self, tab):
         """(page_title, header_extra, content_html) for one tab."""
         template = self.template(f"{tab}.html")  # registers the tab's parts before the build_* methods use them
@@ -878,7 +1015,7 @@ class Site:
         title, header_extra, content = self.content(tab)
         label = self.ui("page.intent" if tab == "intent" else "page.solution")
         nav_intent, nav_solution = self.nav(tab)
-        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close")}
+        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync")}
         return self.fill(
             self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),
@@ -892,7 +1029,7 @@ class Site:
         toc = "".join(self.part("toc_item", label=self.ui(f"nav.{t}")) for t in tabs)
         return self.fill(template, lang=self.lang, title=esc(f"{self.p.name} · export"), project=esc(self.p.name),
                          theme_css=self.theme_css, base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"),
-                         updated=self.updated(), toc=toc, pages=pages)
+                         base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"), updated=self.updated(), toc=toc, pages=pages)
 
 
 # --------------------------------------------------------------------------- commands

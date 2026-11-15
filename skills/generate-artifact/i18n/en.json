@@ -100,11 +100,8 @@
   "t4.show": "show",
   "t4.hide": "hide",
   "t4.detail": "Detail",
-  "t4.good": "Good path",
   "t4.bad": "Bad paths",
   "t4.edge": "Edge cases",
-  "t4.bad_one": "BAD PATH",
-  "t4.edge_one": "EDGE CASE",
   "t5.overview": "All components · before vs after",
   "t5.what": "What changes",
   "t5.why": "Why",
@@ -125,5 +122,14 @@
   "viewer.zoom_out": "Zoom out",
   "viewer.fit": "Fit",
   "viewer.close": "Close",
-  "t3.index": "Concepts"
+  "t3.index": "Concepts",
+  "viewer.both": "Expand both",
+  "viewer.sync": "Sync",
+  "scenario.good": "Good path",
+  "scenario.bad": "Bad",
+  "scenario.edge": "Edge",
+  "t5.inside": "Inside {name} (C4 L3)",
+  "t5.extra_db": "Schema diff (ER)",
+  "t5.extra_queue": "Topology",
+  "t5.extra_other": "Extra view"
 }

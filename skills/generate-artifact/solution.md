@@ -51,18 +51,19 @@ One large, living document that runs from design to finish. Input: the **approve
 ## Tab 4 — Use case details
 Per UC (Main first, then Affected):
 - **Plain-words summary**: what this UC is about, in 1–2 simple sentences.
-- **Sequence diagram**:
+- **Sequence diagram** (ONE per UC, inline SVG, text at least 11px):
   - Written **from reading the actual code**, not from existing docs (docs go stale or skip steps).
   - **Every arrow is labelled.** No unlabelled hops through middle components.
   - Big flows get split: the top level shows the overview, and a step expands into its own **detail sequence diagram** underneath.
-  - **Good path** is shown by default. **Bad paths** and **edge cases** sit in clearly marked `alt` boxes, each with a **show/hide toggle button**.
+  - **Good path** is shown by default. Every **bad path** and **edge case** is an `alt` fragment *inside the same diagram* (each with its own id); group buttons ("Bad paths", "Edge cases") and a per-fragment list ("Bad: API timeout", "Edge: zero projects") show or hide them in place, and the diagram reflows (hidden fragments leave no gap). A main UC should show at least 2 bad paths and 2 edge cases.
 - **User touchpoints**: a table of every message or screen the user sees, per scenario (good / bad / edge).
 - **Arrow legend**: what each arrow means (call, async message, response, event…).
 - **Change track** (collapsed by default): what changed in this UC per version.
 
 ## Tab 5 — Components
-1. **All components, before and after, with data flow**: a side-by-side **architecture / data-flow diagram** (made with diagram-design), not just a grid of boxes. Every arrow between components is labelled with what flows (request, event, rows, email…). New or changed flows use the same change colors as components (new / changed / removed). There's one before/after pair per C4 level shown (the L1/L2/L3 switch swaps the diagram pair). The same applies to the Tab 1 before/after overview. Data: `registry.json` `views` (`{L1: {before, after}, ...}`, files `diagrams/arch-<level>-before.svg` / `-after.svg`); a level with components but no view is a validation warning.
-2. **Per-component change**:
+1. **All components, before and after, with data flow**: a side-by-side **architecture / data-flow diagram** (made with diagram-design), not just a grid of boxes. Every arrow between components is labelled with what flows (request, event, rows, email…). New or changed flows use the same change colors as components (new / changed / removed). The system-wide overview has one before/after pair per level, **L1 Context and L2 Containers only** (the switch swaps the pair; the same applies to the Tab 1 overview). **C4 L3 is components inside ONE container**, so it never joins the overview: it appears inside the owning container's card as "Inside <container> (C4 L3)" with its own before/after pair (a container with L3 views but no changes gets a compact card with an unchanged badge). Every before/after pair has an **Expand both** button: the viewer opens both diagrams side by side (stacked on narrow screens) with synced zoom and pan and a Sync toggle. Data: `registry.json` `views` (`{L1: {before, after}, L2: ...}`), per-container `views.L3`, L3 components declare `parent`. A level or container with components but no view is a validation warning; a global `views.L3` is an error (`l3-not-global`).
+2. **Per-component change** (each card starts with its own diagrams: a focused before/after pair, a type-specific extra, and optional logic flowcharts):
+   - Diagrams (`change.diagrams`): `before`/`after` (the component, its direct neighbours and labelled flows, with new/changed/removed colored); `extra` for a db/store (ER schema diff with PK/FK and crow's-foot cardinality) or a queue (topology: producers, queue, DLQ, consumers); optional `flowchart: [{title, diagram}]` for how a feature decides (diamonds, yes/no branches, terminals). Missing before/after/extra is a warning; the flowchart is optional.
    - What changes and why (linked to UCs and decisions).
    - Data changes: schema migrations, new tables/columns, indexes.
    - Infra changes: new queues/topics (with counts), jobs, configs, permissions.

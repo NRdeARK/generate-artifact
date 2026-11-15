@@ -9,13 +9,27 @@
 <!--/part-->
 
 <!--part:diagram-->
-<figure class="diagram"><span class="diagram-frame"><img src="{{src}}" alt="{{alt}}">{{expand}}</span></figure>
+<figure class="diagram"><span class="diagram-frame" style="max-width:{{maxw}}px">{{svg}}{{expand}}</span></figure>
 <!--/part-->
 <!--part:expand_button-->
 <button type="button" class="expand" aria-label="{{label}}"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
 <!--/part-->
 <!--part:diagram_missing-->
 <div class="diagram missing"><strong>{{ui:diagram.missing}}</strong><code>{{file}}</code></div>
+<!--/part-->
+
+<!--part:pair-->
+<div class="ba-cols" {{attrs}}>
+  {{compare}}
+  <div class="pair-side"><strong>{{ui:ba.before}}</strong>{{before}}</div>
+  <div class="pair-side"><strong>{{ui:ba.after}}</strong>{{after}}</div>
+</div>
+<!--/part-->
+<!--part:compare_button-->
+<button type="button" class="expand-both" data-compare>{{ui:viewer.both}}</button>
+<!--/part-->
+<!--part:titled-->
+<section class="extra"><div class="lbl">{{title}}</div>{{diagram}}</section>
 <!--/part-->
 
 <!--part:ref_link-->
@@ -51,12 +65,6 @@
   {{views}}
   <p class="muted">{{summary}}</p>
 </section>
-<!--/part-->
-<!--part:ba_view-->
-<div class="ba-cols" data-level="{{level}}" {{hidden}}>
-  <div><strong>{{ui:ba.before}}</strong>{{before}}</div>
-  <div><strong>{{ui:ba.after}}</strong>{{after}}</div>
-</div>
 <!--/part-->
 <!--part:level_button-->
 <button type="button" data-level-btn="{{level}}" aria-pressed="{{pressed}}">{{label}}</button>

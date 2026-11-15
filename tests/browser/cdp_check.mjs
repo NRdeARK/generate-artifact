@@ -343,10 +343,46 @@ async function main() {
   record("phone.header_shows_with_keyboard_focus", near(phoneFocus, 0, 0.5), `top with focus inside the bar=${phoneFocus}`);
   await ev("document.activeElement.blur()");
 
+  // ---- CRUD matrix: same flipped treatment, pixel-clean sticky label column, cards on toggle
   await goto("tab1");
-  const crud = await ev(`(() => { const t = document.querySelector(".crud-table"); const w = t.closest(".table-wrap"); const td = t.querySelector("tr:nth-child(2) td:first-child");
-    return { sticky: getComputedStyle(td).position, left: getComputedStyle(td).left, scrolls: w.scrollWidth > w.clientWidth, overflow: getComputedStyle(w).overflowX, stacked: getComputedStyle(td).display === "block" }; })()`);
-  record("phone.crud_matrix_scrolls_with_sticky_first_column", crud.sticky === "sticky" && crud.scrolls && crud.overflow === "auto" && !crud.stacked, JSON.stringify(crud));
+  await ev("localStorage.removeItem('ga-table-view')");
+  await goto("tab1");
+  const crud = await ev(`(() => { const set = document.querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent;
+    return { flip: vis(set.querySelector(".tbl-flip")), cards: vis(set.querySelector(".item-cards")), normalHidden: !vis(set.querySelector(".tbl-normal")),
+      heads: [...set.querySelectorAll(".tbl-flip th[scope=col]")].map((h) => h.innerText.replace(/\\s+/g, " ").trim()),
+      rows: [...set.querySelectorAll(".tbl-flip th[scope=row]")].map((h) => h.innerText.trim().toLowerCase()), toggle: vis(set.querySelector(".view-toggle")) }; })()`);
+  record("phone.crud_flipped_by_default_with_entity_columns", crud.flip && !crud.cards && crud.normalHidden && crud.toggle && crud.heads.join("|").startsWith("Projects DB C4 L2|Status update|Weekly report")
+    && JSON.stringify(crud.rows) === JSON.stringify(["create", "read", "update", "delete"]), JSON.stringify(crud));
+  await ev(`document.querySelector(".top").style.visibility = "hidden"`);
+  await screenshot("flip-phone-tab1-crud", ".tblset-crud-table");
+  await ev(`document.querySelector(".top").style.visibility = ""`);
+  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, document.querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
+  await sleep(700);
+  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, document.querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
+  await sleep(700);
+  const crudScroller = await rectOf(".tblset-crud-table .flip-scroll", false);
+  await drag(crudScroller.x + 60, crudScroller.y, -230, 0, 14);
+  await sleep(500);
+  const crudScrolled = await ev(`document.querySelector(".tblset-crud-table .flip-scroll").scrollLeft`);
+  await ev(`document.querySelector(".top").style.visibility = "hidden"`);  // the pixel check looks at the table, not at the sticky bar sliding over it
+  await sleep(250);
+  const crudClean = await stripIsClean(".tblset-crud-table .flip-scroll");
+  record("phone.crud_flip_swipe_moves_and_label_strip_is_pixel_clean", crudScrolled > 100 && crudClean.total > 100 && crudClean.bad === 0 && crudClean.thLeftOffset <= 0.5, JSON.stringify({ crudScrolled, geom: await ev(`(() => { const s = document.querySelector(".tblset-crud-table .flip-scroll"); const td = s.querySelector("td"); return { sw: s.scrollWidth, cw: s.clientWidth, item: td && td.getBoundingClientRect().width }; })()`), ...crudClean }));
+  await screenshot("flip-phone-tab1-crud-after-swipe", ".tblset-crud-table");
+  await ev(`document.querySelector(".top").style.visibility = ""`);
+  const crudCardsBtn = await rectOf(".tblset-crud-table button[data-table-view=cards]");
+  await tap(crudCardsBtn.x, crudCardsBtn.y);
+  const crudCards = await ev(`(() => { const set = document.querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent; const card = set.querySelector(".item-card");
+    return { cards: vis(set.querySelector(".item-cards")), flip: vis(set.querySelector(".tbl-flip")), head: card.querySelector(".item-head").innerText.replace(/\\s+/g, " ").trim(),
+      lines: [...card.querySelectorAll(".item-line")].map((l) => l.innerText.replace(/\\s+/g, " ").trim()) }; })()`);
+  record("phone.crud_cards_have_name_header_and_four_lines", crudCards.cards && !crudCards.flip && crudCards.head.startsWith("Projects DB") && crudCards.lines.length === 4
+    && /^Create\s*UC-02/i.test(crudCards.lines[0]) && /^Delete\s*n\/a/i.test(crudCards.lines[3]) && crudCards.lines[3].includes("projects are never deleted here"), JSON.stringify(crudCards));
+  await ev(`document.querySelector(".top").style.visibility = "hidden"`);
+  await screenshot("cards-phone-tab1-crud", ".tblset-crud-table");
+  await ev(`document.querySelector(".top").style.visibility = ""`);
+  const crudFlipBtn = await rectOf(".tblset-crud-table button[data-table-view=flip]");
+  await tap(crudFlipBtn.x, crudFlipBtn.y);
+  await ev("localStorage.removeItem('ga-table-view')");
 
   // ============================================================ (2) real touch on a phone: single viewer
   await goto("tab3");

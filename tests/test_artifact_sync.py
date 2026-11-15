@@ -1362,7 +1362,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
 
     def test_phone_layout_on_all_six_pages(self):
-        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2 + 4)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2 + 4 + 2)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
         for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
             self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
 
@@ -1401,7 +1401,7 @@ class MobileTableTests(FixtureCase):
 
     def test_key_tables_have_a_compact_item_card_view_for_narrow_screens(self):
         pages = self.pages()
-        for page, count in (("tab1", 2), ("tab4", 3), ("tab5", 2)):
+        for page, count in (("tab1", 3), ("tab4", 3), ("tab5", 2)):
             self.assertEqual(pages[page].count('<div class="item-cards">'), count, page)
         for page in ("tab1", "tab4", "tab5"):
             for card in re.findall(r'<article class="item-card">.*?</article>', pages[page], re.S):
@@ -1413,12 +1413,13 @@ class MobileTableTests(FixtureCase):
             self.assertIn(needle, phone)
         self.assertRegex(css, r"\.item-cards \{ display: none; \}")  # hidden on wide screens
 
-    def test_crud_matrix_stays_a_scroll_box_with_a_sticky_first_column(self):
+    def test_old_crud_specific_scroll_box_rules_are_gone(self):
         text = self.pages()["tab1"]
-        self.assertIn('<table class="crud-table">', text)
-        self.assertNotIn("crud-table stack", text)
+        self.assertIn('<table class="crud-table">', text)  # same treatment as the other tables: normal table inside .tbl-normal
+        self.assertIn('class="tblset tblset-crud-table"', text)
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
-        self.assertRegex(css, r"\.crud-table th:first-child, \.crud-table td:first-child \{[^}]*position: sticky; left: 0")
+        self.assertNotIn(".crud-table th:first-child", css)
+        self.assertNotRegex(css, r"\.crud-table \{ min-width")
 
     def test_width_audit_rules(self):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
@@ -1443,22 +1444,21 @@ class FlipTableTests(FixtureCase):
         for needle in ("UC-01", "UC-03", "View project status", "A team member opens the status page", "Outcome O1", "Projects DB"):
             for view in (uc, flip, cards):
                 self.assertIn(needle, en_plain(view))
-        for page, expected in (("tab1", 2), ("tab4", 3), ("tab5", 2)):
+        for page, expected in (("tab1", 3), ("tab4", 3), ("tab5", 2)):
             self.assertEqual(pages[page].count('<table class="flip">'), expected, page)
             self.assertEqual(pages[page].count('<div class="item-cards">'), expected, page)
 
     def test_toggle_markup_defaults_to_flipped(self):
         text = self.pages()["tab1"]
-        self.assertEqual(text.count('data-table-view="flip" aria-pressed="true"'), 2)
-        self.assertEqual(text.count('data-table-view="cards" aria-pressed="false"'), 2)
+        self.assertEqual(text.count('data-table-view="flip" aria-pressed="true"'), 3)
+        self.assertEqual(text.count('data-table-view="cards" aria-pressed="false"'), 3)
         for label in ("Flip", "สลับแกน", "Cards", "การ์ด", "swipe", "ปัดดู"):
             self.assertIn(label, text)
 
-    def test_crud_matrix_and_sample_rows_are_not_flipped(self):
+    def test_crud_matrix_is_flipped_like_the_others_but_sample_rows_are_not(self):
         pages = self.pages()
-        self.assertNotIn("tblset", pages["tab1"].split('<table class="crud-table">')[1].split("</table>")[0])
-        tab5 = pages["tab5"]
-        self.assertEqual(tab5.count('<table class="flip">'), 2)  # only the two dictionary column tables, not the sample rows
+        self.assertEqual(pages["tab1"].count('<table class="flip">'), 3)  # UC table, impact sweep, CRUD
+        self.assertEqual(pages["tab5"].count('<table class="flip">'), 2)  # only the dictionary column tables, not the sample rows
 
     def test_css_flips_only_on_narrow_screens_with_snap_sticky_label_and_fade(self):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
@@ -1608,6 +1608,64 @@ class HeaderTests(FixtureCase):
         for needle in ("is-hidden", "passive: true", "requestAnimationFrame", "pinUntil", "delta > 8", "delta < -8", "--header-h"):
             self.assertIn(needle, js)
         self.assertRegex(js, r"viewerOpen\(\)[^;]*header\.contains\(document\.activeElement\)")
+
+class CrudTableTests(FixtureCase):
+    def tab1(self):
+        run("render", str(self.dir), "--tabs", "tab1")
+        return (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+
+    def sets(self, text):
+        return re.search(r'<div class="tblset tblset-crud-table">.*?<div class="item-cards">.*?</div>\s*</div>', text, re.S).group(0)
+
+    def test_desktop_entity_column_names_components_with_a_level_badge(self):
+        block = self.sets(self.tab1())
+        table = re.search(r'<table class="crud-table">.*?</table>', block, re.S).group(0)
+        heads = [en_plain(h) for h in re.findall(r"<th>(.*?)</th>", table, re.S)]
+        self.assertEqual(heads, ["Entity", "Create", "Read", "Update", "Delete"])
+        rows = re.findall(r"<tr><td>.*?</tr>", table, re.S)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(en_plain(re.findall(r"<td[^>]*>.*?</td>", rows[0], re.S)[0]), "Projects DB C4 L2")  # a registry component gets its level badge
+        self.assertEqual(en_plain(re.findall(r"<td[^>]*>.*?</td>", rows[1], re.S)[0]), "Status update")  # a plain entity does not
+        self.assertIn("<strong>Projects DB</strong>", rows[0])
+
+    def test_cells_show_uc_name_links_and_muted_n_a_reasons(self):
+        block = self.sets(self.tab1())
+        table = re.search(r'<table class="crud-table">.*?</table>', block, re.S).group(0)
+        self.assertRegex(table, r'<a class="uc-link" href="https://claude\.ai/artifact/PLACEHOLDER-tab4#UC-02"><span class="ref-id">UC-02</span> · <strong>')
+        self.assertIn("Update a project's status", en_plain(table))
+        self.assertRegex(table, r'<td class="na"><span class="badge unchanged">n/a</span> <em class="na-reason">rows only gain a status timestamp</em></td>')
+
+    def test_gap_cell_has_warning_style_and_a_gap_badge_in_every_view(self):
+        self.edit("usecases.json", lambda d: d["crud"][1].update(delete=""))
+        block = self.sets(self.tab1())
+        gap_cells = re.findall(r'<td class="gap">(.*?)</td>', block, re.S)
+        self.assertEqual(len(gap_cells), 2)  # normal table + flipped table
+        self.assertTrue(all('class="badge changed"' in c and en_plain(c) == "Gap" for c in gap_cells))
+        self.assertRegex(block, r'<div class="item-line gap"><span class="item-label"><span data-l="en">Delete</span>')
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.item-line\.gap \{[^}]*background: var\(--changed-bg\)")
+
+    def test_flipped_view_has_one_entity_per_column_and_crud_rows(self):
+        block = self.sets(self.tab1())
+        flip = re.search(r'<table class="flip">.*?</table>', block, re.S).group(0)
+        self.assertEqual([en_plain(h) for h in re.findall(r'<th scope="col">(.*?)</th>', flip, re.S)], ["Projects DB C4 L2", "Status update", "Weekly report"])
+        self.assertEqual([en_plain(h) for h in re.findall(r'<th scope="row">(.*?)</th>', flip, re.S)], ["Create", "Read", "Update", "Delete"])
+
+    def test_cards_have_a_name_header_and_four_labelled_lines(self):
+        block = self.sets(self.tab1())
+        cards = re.findall(r'<article class="item-card">.*?</article>', block, re.S)
+        self.assertEqual(len(cards), 3)
+        card = cards[0]
+        self.assertEqual(en_plain(re.search(r'<header class="item-head">.*?</header>', card, re.S).group(0)), "Projects DB C4 L2")
+        lines = re.findall(r'<div class="item-line[^"]*">.*?</div>', card, re.S)
+        self.assertEqual([en_plain(l).split(" ")[0] for l in lines], ["Create", "Read", "Update", "Delete"])
+        self.assertIn("Delete n/a projects are never deleted here", en_plain(lines[3]))
+        self.assertIn("UC-02", en_plain(lines[0]))
+
+    def test_thai_labels_for_the_badges(self):
+        text = self.tab1()
+        self.assertIn("ช่องว่าง", json.dumps(json.loads((SKILL / "i18n" / "th.json").read_text(encoding="utf-8")), ensure_ascii=False))
+        self.assertIn("n/a", text)
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

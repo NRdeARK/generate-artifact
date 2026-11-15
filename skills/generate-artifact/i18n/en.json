@@ -62,7 +62,7 @@
   "crud.read": "Read",
   "crud.update": "Update",
   "crud.delete": "Delete",
-  "crud.gap": "GAP",
+  "crud.gap": "Gap",
   "t1.none": "none",
   "t2.tree": "Solution path tree",
   "t2.tree_legend": "chosen · rejected (dashed) · deferred · open",

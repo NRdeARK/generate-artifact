@@ -918,20 +918,37 @@ class Site:
     def table_set(self, cls, columns, rows, first_cell_attrs=""):
         """One set of rows, three renderings: a normal table (wide screens), a flipped table (item per column) and
         compact item cards (narrow screens). CSS picks one; all are plain HTML.
-        Each row: cells (per column), title, meta (badges next to the name), badge (card only), body [(label_key|None, html)],
-        footer (html), flip [(label_key, html)]."""
+        Each row: cells (per column; a cell may be (html, css_class)), title, meta (badges next to the name), badge (card only),
+        body [(label_key|None, html[, css_class])], footer (html), flip [(label_key, html[, css_class])]."""
+        def split(cell):
+            return cell if isinstance(cell, tuple) else (cell, "")
+
+        def td(j, cell):
+            html, css = split(cell)
+            cls_attr = f' class="{css}"' if css else ""
+            return f"<td{first_cell_attrs if j == 0 else ''}{cls_attr}>{html}</td>"
+
+        def flip_value(row, key):
+            entry = next((e for e in row["flip"] if e[0] == key), None)
+            return (entry[1], entry[2] if len(entry) > 2 else "") if entry else ("", "")
+
         head = "".join(f"<th>{self.ui(key)}</th>" for key in columns)
-        normal = "".join("<tr>" + "".join(f"<td{first_cell_attrs if j == 0 else ''}>{cell}</td>" for j, cell in enumerate(r["cells"])) + "</tr>" for r in rows)
+        normal = "".join("<tr>" + "".join(td(j, c) for j, c in enumerate(r["cells"])) + "</tr>" for r in rows)
         flip_head = "".join(self.part("flip_title", title=r["title"], meta=r.get("meta", "")) for r in rows)
-        keys = list(dict.fromkeys(key for r in rows for key, _ in r["flip"]))
-        flip_rows = "".join(self.part("flip_row", label=self.ui(key), cells="".join(self.part("flip_cell", content=dict(r["flip"]).get(key, "")) for r in rows))
-                            for key in keys)
+        keys = list(dict.fromkeys(entry[0] for r in rows for entry in r["flip"]))
+        flip_rows = "".join(self.part("flip_row", label=self.ui(key), cells="".join(
+            self.part("flip_cell", attrs=f' class="{css}"' if css else "", content=html) for html, css in (flip_value(r, key) for r in rows))) for key in keys)
+
+        def line(entry):
+            key, html = entry[0], entry[1]
+            css = f" {entry[2]}" if len(entry) > 2 else ""
+            return f'<div class="item-body{css}">{html}</div>' if key is None else f'<div class="item-line{css}"><span class="item-label">{self.ui(key)}</span> {html}</div>'
+
         cards = "".join(self.part(
             "item_card", title=r["title"], meta=r.get("meta", ""), badge=r.get("badge", ""),
-            body="".join(f'<div class="item-body">{html}</div>' if key is None else f'<div class="item-line"><span class="item-label">{self.ui(key)}</span> {html}</div>'
-                         for key, html in r.get("body", []) if html),
+            body="".join(line(e) for e in r.get("body", []) if e[1]),
             footer=f'<footer class="item-foot">{r["footer"]}</footer>' if r.get("footer") else "") for r in rows)
-        return self.part("tblset", cls=cls, head=head, rows=normal, flip_head=flip_head, flip_rows=flip_rows, cards=cards,
+        return self.part("tblset", cls=cls, set=cls or "plain", head=head, rows=normal, flip_head=flip_head, flip_rows=flip_rows, cards=cards,
                          label_view=esc(self.ui_plain("tbl.view"), quote=True))
 
     def svg_root_id(self, rel):
@@ -996,10 +1013,10 @@ class Site:
             impact_rows.append(dict(cells=[f"<strong>{name}</strong> {level}", change, ucs], title=f"<strong>{name}</strong>", meta=level, body=[(None, change)],
                                     footer=f'{self.ui("col.affected_uc")}: {ucs}', flip=[("col.change", change), ("col.affected_uc", ucs)]))
         impact_table = self.table_set("", ["col.component", "col.change", "col.affected_uc"], impact_rows)
-        crud = "".join(self.part("crud_row", entity=esc(r.get("entity", "")), cells="".join(self._crud_cell(r.get(op)) for op in CRUD_OPS))
-                       for r in self.p.usecases["crud"])
+        crud_table = self.table_set("crud-table", ["col.entity", "crud.create", "crud.read", "crud.update", "crud.delete"],
+                                    [self.crud_row(r) for r in self.p.usecases["crud"]])
         slots = dict(recap=recap, issues=issues, outcomes=outcomes, tree=self.diagram(uc_tree_path(self.p), "outcome to use cases"),
-                     uc_table=uc_table, impact_table=impact_table, crud_rows=crud, overview=self.before_after("t1.overview"))
+                     uc_table=uc_table, impact_table=impact_table, crud_table=crud_table, overview=self.before_after("t1.overview"))
         return slots, ""
 
     def _uc_row(self, uc):
@@ -1023,12 +1040,34 @@ class Site:
                     flip=[("col.tier", pill), ("col.description", description), ("col.traced", traced)])
 
     def _crud_cell(self, value):
+        """(html, css_class) for one CRUD cell: a UC with its name, an n/a reason, or a gap."""
         value = (value or "").strip()
         if re.fullmatch(r"UC-\d+", value):
-            return self.part("crud_cell", cls="", value=self.ref(value))
+            return self.uc_label(value), ""
         if value.startswith("n/a"):
-            return self.part("crud_cell", cls="na", value=esc(value))
-        return self.part("crud_cell", cls="gap", value=self.ui("crud.gap"))
+            reason = re.sub(r"^n/a\s*[:(]?\s*", "", value).rstrip(")")
+            return f'<span class="badge unchanged">n/a</span> <em class="na-reason">{esc(reason)}</em>', "na"
+        return f'<span class="badge changed">{self.ui("crud.gap")}</span>', "gap"
+
+    def uc_label(self, uid):
+        """'UC-02 · Update a project's status' as a link to Tab 4 (plain text when Tab 4 has no URL or the UC is unknown)."""
+        name = self.tx(uid, "title") if uid in self.ucs else ""
+        url = self.tab_url("tab4")
+        if not name:
+            return self.ref(uid)
+        return (self.part("uc_link", href=esc(f"{url}#{uid}", quote=True), id=esc(uid), name=name) if url
+                else self.part("uc_plain", id=esc(uid), name=name))
+
+    def crud_row(self, row):
+        """One CRUD row for the table, the flipped table and the item card."""
+        entity = str(row.get("entity", ""))
+        component = next((c for c in self.p.components if str(c.get("name", "")).lower() == entity.lower()), None)
+        level = f'<span class="badge unchanged">C4 {esc(component.get("c4_level", ""))}</span>' if component else ""
+        name = f"<strong>{esc(entity)}</strong>"
+        cells = {op: self._crud_cell(row.get(op)) for op in CRUD_OPS}
+        return dict(cells=[f"{name} {level}".strip()] + [cells[op] for op in CRUD_OPS], title=name, meta=level,
+                    body=[(f"crud.{op}", cells[op][0], "gap" if cells[op][1] == "gap" else "") for op in CRUD_OPS],
+                    flip=[(f"crud.{op}", cells[op][0], cells[op][1]) for op in CRUD_OPS])
 
     def build_tab2(self):
         decisions = self.p.decision_list

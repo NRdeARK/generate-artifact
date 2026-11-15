@@ -228,14 +228,11 @@ body.print .expand, body.print .viewer { display: none; }
 .item-cards { display: none; }
 .view-toggle { display: none; }
 .swipe-hint { display: none; }
-.crud-table th:first-child, .crud-table td:first-child { position: sticky; left: 0; background: var(--surface); }
-.crud-table th:first-child { background: var(--surface-alt); }
 .ref-id { white-space: nowrap; }
 .uc-link { text-decoration: none; color: var(--fg); }
 a.uc-link .ref-id { color: var(--link); text-decoration: underline; }
 .item-type { color: var(--fg-muted); }
 @media (max-width: 640px) {
-  .crud-table { min-width: 34rem; }
   /* flipped view (default on phones): fields down a sticky first column, one item per column, swipe sideways */
   .view-toggle { display: inline-flex; margin-bottom: 6px; }
   .view-toggle button { font: inherit; font-size: 12px; padding: 4px 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
@@ -283,3 +280,15 @@ body.print .tbl-normal { display: block !important; }
 .top:focus-within { transform: none; }
 .side { transition: top 0.2s ease; }
 @media (prefers-reduced-motion: reduce) { .top, .side { transition: none; } }
+
+/* CRUD matrix cells: n/a reasons muted, gaps highlighted in every view */
+.na-reason { color: var(--fg-muted); font-style: italic; }
+.item-line.gap { background: var(--changed-bg); color: var(--changed-fg); border-radius: 4px; padding: 4px 8px; }
+.item-line.gap .item-label { color: var(--changed-fg); }
+table.flip td.gap { background: var(--changed-bg); color: var(--changed-fg); }
+
+/* CRUD cards: label and value share one compact line */
+.tblset-crud-table .item-line { padding-left: 5.25rem; text-indent: -5.25rem; }
+.tblset-crud-table .item-line.gap { padding-left: calc(5.25rem + 8px); text-indent: -5.25rem; }
+.tblset-crud-table .item-label { display: inline-block; width: 4.75rem; margin-right: 0.5rem; text-indent: 0; }
+.tblset-crud-table .item-line * { text-indent: 0; }

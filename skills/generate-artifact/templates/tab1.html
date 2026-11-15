@@ -14,15 +14,9 @@
 </section>
 <section class="card">
     <div class="lbl">{{ui:t1.crud}}</div>
-    <div class="table-wrap"><table class="crud-table"><tr><th>{{ui:col.entity}}</th><th>{{ui:crud.create}}</th><th>{{ui:crud.read}}</th><th>{{ui:crud.update}}</th><th>{{ui:crud.delete}}</th></tr>{{crud_rows}}</table></div>
+    {{crud_table}}
 </section>
 {{overview}}
 <!--part:outcome-->
 <div class="banner"><span class="lbl">{{id}}</span><p>{{text}}</p></div>
-<!--/part-->
-<!--part:crud_row-->
-<tr><td>{{entity}}</td>{{cells}}</tr>
-<!--/part-->
-<!--part:crud_cell-->
-<td class="{{cls}}">{{value}}</td>
 <!--/part-->

@@ -21,6 +21,7 @@
   <div class="card">
     <div class="row-between"><span class="lbl">{{ui:t4.sequence}}</span><span class="muted">{{ui:t4.sequence_note}}</span></div>
     <div class="toggles frag-chips">{{chips}}</div>
+    {{legend}}
     {{diagram}}
   </div>
   <div class="grid3">
@@ -36,6 +37,9 @@
   {{details}}
   <details class="card" {{open_attr}}><summary>{{ui:t4.changetrack}}</summary>{{track}}</details>
 </section>
+<!--/part-->
+<!--part:seq_legend-->
+<p class="seq-legend"><span class="lg lg-added"><i aria-hidden="true">+</i>{{ui:seq.added}}</span><span class="lg lg-changed"><i aria-hidden="true">~</i>{{ui:seq.changed}}</span><span class="lg lg-unchanged"><i aria-hidden="true"></i>{{ui:seq.unchanged}}</span></p>
 <!--/part-->
 <!--part:toggle_kind-->
 <button type="button" class="tog {{kind}}" data-target="{{target}}" data-kind="{{kind}}" aria-pressed="false">{{label}}: <span class="on-show">{{ui:t4.show}}</span><span class="on-hide">{{ui:t4.hide}}</span></button>

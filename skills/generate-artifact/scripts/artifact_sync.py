@@ -299,6 +299,48 @@ def sanitize_svg(text):
     return ET.tostring(root, encoding="unicode"), problems
 
 
+# A UC sequence diagram marks each message group with data-step="<step label>". usecases.json step_changes maps a step label to
+# "added" or "changed" (default unchanged); the renderer recolours those arrows and adds a text marker, so colour is never the only cue.
+STEP_CHANGE_VALUES = ("added", "changed", "unchanged")
+STEP_STYLE = {"added": ("#1F6FA8", "arrow-new", "#CFE4F5", "#0B3D63", "+", "Added in this use case"),
+              "changed": ("#B87800", "arrow-changed", "#FBE3B0", "#5C3A00", "~", "Changed in this use case")}
+
+
+def mark_step_changes(clean_svg, changes):
+    """(svg, steps_found): recolour the arrows of added/changed steps and tag their labels. Elements and attributes stay within the sanitizer allow-list."""
+    root = ET.fromstring(clean_svg)
+    svg_id = root.get("id", "")
+    markers = {m.get("id") for m in root.iter(f"{{{SVG_NS}}}marker")}
+    q = lambda name: f"{{{SVG_NS}}}{name}"  # noqa: E731
+    found = set()
+    for group in root.iter(q("g")):
+        step = group.get("data-step")
+        if step is None:
+            continue
+        found.add(step)
+        kind = changes.get(step)
+        if kind not in STEP_STYLE:
+            continue
+        stroke, marker, tint, ink, sign, tip = STEP_STYLE[kind]
+        group.set("data-change", kind)
+        for el in group:
+            if el.tag in (q("line"), q("path")) and el.get("marker-end"):
+                el.set("stroke", stroke)
+                el.set("stroke-width", "2.4")
+                if f"{svg_id}-{marker}" in markers:
+                    el.set("marker-end", f"url(#{svg_id}-{marker})")
+        mask = next((el for el in group if el.tag == q("rect") and el.get("height") == "16"), None)
+        if mask is None:
+            continue
+        x, y = float(mask.get("x")) - 22, float(mask.get("y"))
+        tag = ET.SubElement(group, q("rect"), x=f"{x:g}", y=f"{y:g}", width="16", height="16", rx="2", fill=tint, stroke=stroke)
+        ET.SubElement(tag, q("title")).text = tip
+        text = ET.SubElement(group, q("text"), x=f"{x + 8:g}", y=f"{y + 12:g}", fill=ink, **{
+            "font-size": "12", "font-weight": "700", "text-anchor": "middle", "font-family": "ui-monospace, 'Cascadia Mono', Consolas, monospace"})
+        text.text = sign
+    return ET.tostring(root, encoding="unicode"), found
+
+
 def read_diagram(root, rel):
     """(clean_svg, problems) for a diagram path, or (None, [reason]) when the path or file is unusable."""
     path, problem = resolve_diagram(root, rel)
@@ -513,6 +555,22 @@ def check_usecases(project):
     return out
 
 
+def check_step_changes(project):
+    out = []
+    for uc in project.ucs:
+        changes = uc.get("step_changes")
+        where = f"usecases.json {uc.get('id')} step_changes"
+        if changes is None:
+            continue
+        if not isinstance(changes, dict):
+            out.append(Finding("error", "step-change-invalid", where, "step_changes must be an object like {\"2\": \"added\", \"3b\": \"changed\"}."))
+            continue
+        out += [Finding("error", "step-change-invalid", f"{where}.{step}",
+                        f"'{value}' is not allowed. Use one of: {', '.join(STEP_CHANGE_VALUES)} (unchanged is the default).")
+                for step, value in changes.items() if value not in STEP_CHANGE_VALUES]
+    return out
+
+
 def check_decisions(project):
     known, out = known_ids(project), check_ids("decisions.json", project.decision_list, "decision")
     for dec in project.decision_list:
@@ -639,6 +697,11 @@ def check_diagrams(project):
         clean, _ = read_diagram(project.root, uc["diagram"])
         if clean:
             fragments = set(re.findall(r'data-fragment="([^"]+)"', clean))
+            steps = set(re.findall(r'data-step="([^"]+)"', clean))
+            changes = uc.get("step_changes") if isinstance(uc.get("step_changes"), dict) else {}
+            out += [Finding("warning", "step-change-unknown", f"usecases.json {uc.get('id')} step_changes.{step}",
+                            f"{uc['diagram']} has no message with data-step=\"{step}\". Check the step label.")
+                    for step in changes if steps and step not in steps]
             out += [Finding("error", "no-fragment", f"usecases.json {uc.get('id')}/{flow.get('id')}",
                             f"{uc['diagram']} has no alt fragment data-fragment=\"{flow.get('id')}\" for this {flow.get('kind')} flow.")
                     for flow in uc.get("flows") or [] if flow.get("kind") in ("bad", "edge") and flow.get("id") not in fragments]
@@ -658,6 +721,7 @@ def check_translations(project):
 VALIDATION_STEPS = [
     ("registry.json", check_registry),
     ("usecases.json", check_usecases),
+    ("usecases.json step_changes", check_step_changes),
     ("decisions.json", check_decisions),
     ("concepts.json", check_concepts),
     ("artifacts.json", check_artifacts),
@@ -842,13 +906,15 @@ class Site:
     def comp_name(self, cid):
         return esc(self.reg.get(cid, {}).get("name", cid or "?"))
 
-    def diagram(self, rel, alt=""):
+    def diagram(self, rel, alt="", step_changes=None):
         """Inline, sanitized SVG with an expand button (placeholder box when the file is missing or unusable)."""
         if not rel:
             return ""
         clean, _ = read_diagram(self.p.root, rel)
         if not clean:
             return self.part("diagram_missing", file=esc(rel))
+        if step_changes:
+            clean, _ = mark_step_changes(clean, step_changes)
         width = svg_width(clean)
         end = clean.index(">")
         head = re.sub(r'\s(?:width|height)="[^"]*"', "", clean[:end])
@@ -1137,6 +1203,8 @@ class Site:
         chips = "".join(self.part("toggle_fragment", kind=esc(f["kind"]), target=target, fragment=esc(str(f.get("id", "")), quote=True), label=scenario(i, f))
                         for i, f in enumerate(flows) if f.get("kind") in ("bad", "edge"))
         kind_class = {"good": "unchanged", "bad": "changed", "edge": "new"}
+        raw_changes = uc.get("step_changes") if isinstance(uc.get("step_changes"), dict) else {}
+        step_changes = {str(k): v for k, v in raw_changes.items() if v in STEP_STYLE}
         touch_rows = []
         for i, f in enumerate(flows):
             kind = f.get("kind", "good")
@@ -1152,7 +1220,7 @@ class Site:
         return self.part(
             "uc", id=esc(uid or ""), title=self.tx(uid, "title"), tier=self.ui(f"tier.{uc.get('tier', 'Main')}"),
             source=self.ui(f"source.{uc.get('source', 'code')}"), summary=self.tx(uid, "summary"), toggles=toggles, chips=chips,
-            diagram=self.diagram(rel), touchpoints=rows, details=details, open_attr=self.open_attr(), track=self.changelog(uid, wrap=False))
+            legend=self.part("seq_legend") if step_changes else "", diagram=self.diagram(rel, step_changes=step_changes), touchpoints=rows, details=details, open_attr=self.open_attr(), track=self.changelog(uid, wrap=False))
 
     def build_tab5(self):
         cards = "".join(self._component(c) for c in self.p.components if c.get("status") != "unchanged" or l3_view_paths(self.p, c))

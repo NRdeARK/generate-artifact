@@ -1362,7 +1362,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
 
     def test_phone_layout_on_all_six_pages(self):
-        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2 + 4 + 2)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2 + 4 + 2 + 1)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
         for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
             self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
 
@@ -1377,7 +1377,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assert_group("touch.", 11)
 
     def test_viewer_layout_toggle_on_desktop(self):
-        self.assert_group("desktop.", 5 + 6)
+        self.assert_group("desktop.", 5 + 6 + 4)
 
     def test_thai_glyphs_render_and_nothing_overflows(self):
         self.assert_group("thai.", 2 + 12)
@@ -1666,6 +1666,118 @@ class CrudTableTests(FixtureCase):
         text = self.tab1()
         self.assertIn("ช่องว่าง", json.dumps(json.loads((SKILL / "i18n" / "th.json").read_text(encoding="utf-8")), ensure_ascii=False))
         self.assertIn("n/a", text)
+
+class StepChangeTests(FixtureCase):
+    def tab4(self):
+        run("render", str(self.dir), "--tabs", "tab4")
+        return (self.dir / "build" / "tab4.html").read_text(encoding="utf-8")
+
+    def uc_svg(self, text, uid):
+        return re.search(rf'<svg[^>]*id="{uid.lower()}".*?</svg>', text, re.S).group(0)
+
+    def test_added_and_changed_arrows_get_two_colours_and_unchanged_stay_neutral(self):
+        svg = self.uc_svg(self.tab4(), "UC-02")
+        groups = {m.group(1): m.group(0) for m in re.finditer(r'<g data-step="([^"]+)"[^>]*>.*?</g>', svg, re.S)}
+        self.assertIn('data-change="changed"', groups["1"])
+        self.assertIn('stroke="#B87800"', groups["1"])
+        self.assertIn("url(#uc-02-arrow-changed)", groups["1"])
+        self.assertIn('data-change="added"', groups["2"])
+        self.assertIn('stroke="#1F6FA8"', groups["2"])
+        self.assertIn("url(#uc-02-arrow-new)", groups["2"])
+        self.assertNotIn("data-change", groups["6"])  # untouched step stays neutral
+        self.assertIn('stroke="#5E5D59"', groups["6"])
+
+    def test_alt_fragment_arrows_are_marked_too(self):
+        svg = self.uc_svg(self.tab4(), "UC-02")
+        fragment = re.search(r'<g[^>]*data-fragment="bad-queue".*?</g>\s*(?=<g data-block|<g data-legend)', svg, re.S).group(0)
+        self.assertIn('data-change="added"', fragment)
+
+    def test_every_marked_arrow_has_a_text_marker_not_just_a_colour(self):
+        svg = self.uc_svg(self.tab4(), "UC-02")
+        for kind, sign in (("added", "+"), ("changed", "~")):
+            groups = re.findall(rf'<g data-step="[^"]+" data-change="{kind}">.*?</g>', svg, re.S)
+            self.assertTrue(groups, kind)
+            for group in groups:
+                self.assertRegex(group, rf'<text[^>]*font-size="12"[^>]*>{re.escape(sign)}</text>')
+                self.assertIn(f"{kind.capitalize()} in this use case", group)  # tooltip for the marker
+
+    def test_two_use_cases_show_both_kinds(self):
+        text = self.tab4()
+        for uid in ("UC-02", "UC-03"):
+            svg = self.uc_svg(text, uid)
+            self.assertIn('data-change="added"', svg, uid)
+            self.assertIn('data-change="changed"', svg, uid)
+
+    def test_legend_above_the_diagram_in_both_languages(self):
+        text = self.tab4()
+        legend = re.search(r'<p class="seq-legend".*?</p>', text, re.S).group(0)
+        plain = en_plain(legend)
+        for word in ("Added in this use case", "Changed in this use case", "Unchanged"):
+            self.assertIn(word, plain)
+        self.assertIn("เพิ่มใน", legend)
+        self.assertLess(text.index('class="seq-legend"'), text.index('<svg xmlns="http://www.w3.org/2000/svg" id="uc-01"'))
+
+    def test_no_legend_for_a_use_case_without_changes(self):
+        self.edit("usecases.json", lambda d: [u.pop("step_changes", None) for u in d["ucs"]])
+        text = self.tab4()
+        self.assertNotIn('class="seq-legend"', text)
+        self.assertNotIn("data-change=", text)
+
+    def test_validator_rejects_other_values_and_bad_shapes(self):
+        self.edit("usecases.json", lambda d: d["ucs"][1].update(step_changes={"1": "removed"}))
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("step-change-invalid", codes)
+        self.edit("usecases.json", lambda d: d["ucs"][1].update(step_changes=["1"]))
+        self.assertIn("step-change-invalid", self.codes()[1])
+        self.edit("usecases.json", lambda d: d["ucs"][1].update(step_changes={"1": "unchanged", "2": "changed"}))
+        self.assertNotIn("step-change-invalid", self.codes()[1])
+
+    def test_unknown_step_is_a_warning(self):
+        self.edit("usecases.json", lambda d: d["ucs"][1].update(step_changes={"99z": "added"}))
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("[WARNING] step-change-unknown", out)
+
+    def test_marked_svg_is_still_sanitized_and_uses_only_allowed_elements(self):
+        import artifact_sync
+        svg = self.uc_svg(self.tab4(), "UC-02")
+        names = set(re.findall(r"<([a-zA-Z]+)[\s>/]", svg))
+        self.assertTrue(names <= set(artifact_sync.SVG_TAGS), names - set(artifact_sync.SVG_TAGS))
+        clean, problems = artifact_sync.sanitize_svg(svg)
+        self.assertEqual(problems, [])
+        self.assertIn("data-change", clean)
+
+    def test_text_in_markers_is_at_least_11px_and_contrast_is_enough(self):
+        import artifact_sync
+
+        def lum(hex_):
+            channels = [int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+            return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+        def ratio(a, b):
+            hi, lo = sorted((lum(a), lum(b)), reverse=True)
+            return (hi + 0.05) / (lo + 0.05)
+
+        paper = "#FAF9F5"
+        for stroke, tint, ink in (("#1F6FA8", "#CFE4F5", "#0B3D63"), ("#B87800", "#FBE3B0", "#5C3A00")):
+            self.assertGreaterEqual(ratio(stroke, paper), 3.0, stroke)  # arrow line, non-text graphic
+            self.assertGreaterEqual(ratio(ink, tint), 7.0, ink)  # marker glyph on its tint
+        self.assertEqual(artifact_sync.STEP_STYLE["added"][0], "#1F6FA8")
+        self.assertEqual(artifact_sync.STEP_STYLE["changed"][0], "#B87800")
+
+    def test_viewer_can_show_the_legend_and_keeps_the_marked_svg(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        self.assertIn("viewer-legend", js)
+        base = (SKILL / "templates" / "_base.html").read_text(encoding="utf-8")
+        self.assertIn('id="viewer-legend"', base)
+
+    def test_docs_describe_the_field_and_the_data_step_hook(self):
+        solution = (SKILL / "solution.md").read_text(encoding="utf-8")
+        for needle in ("step_changes", "data-step", "added", "changed"):
+            self.assertIn(needle, solution)
+        self.assertIn("step_changes", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

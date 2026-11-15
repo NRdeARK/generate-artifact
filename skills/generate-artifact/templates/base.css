@@ -292,3 +292,15 @@ table.flip td.gap { background: var(--changed-bg); color: var(--changed-fg); }
 .tblset-crud-table .item-line.gap { padding-left: calc(5.25rem + 8px); text-indent: -5.25rem; }
 .tblset-crud-table .item-label { display: inline-block; width: 4.75rem; margin-right: 0.5rem; text-indent: 0; }
 .tblset-crud-table .item-line * { text-indent: 0; }
+
+/* sequence legend: what this use case adds or changes (text marker + colour) */
+.seq-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 0 8px; font-size: 12px; color: var(--fg-muted); }
+.seq-legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+.seq-legend i { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 2px; border: 1px solid var(--unchanged-bd); background: var(--unchanged-bg); color: var(--unchanged-fg); font: 700 12px/1 ui-monospace, Consolas, monospace; font-style: normal; }
+.seq-legend .lg-added i { background: var(--new-bg); border-color: var(--new-bd); color: var(--new-fg); }
+.seq-legend .lg-changed i { background: var(--changed-bg); border-color: var(--changed-bd); color: var(--changed-fg); }
+.viewer-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+.viewer-legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.viewer-legend i { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 2px; border: 1px solid var(--unchanged-bd); background: var(--unchanged-bg); color: var(--unchanged-fg); font: 700 12px/1 ui-monospace, Consolas, monospace; font-style: normal; }
+.viewer-legend .lg-added i { background: var(--new-bg); border-color: var(--new-bd); color: var(--new-fg); }
+.viewer-legend .lg-changed i { background: var(--changed-bg); border-color: var(--changed-bd); color: var(--changed-fg); }

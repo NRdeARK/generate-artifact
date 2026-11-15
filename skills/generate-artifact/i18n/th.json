@@ -163,5 +163,8 @@
   "tbl.view": "มุมมองตาราง",
   "col.usecase": "ยูสเคส",
   "col.description": "คำอธิบาย",
-  "t1.from": "จาก:"
+  "t1.from": "จาก:",
+  "seq.added": "เพิ่มใน use case นี้",
+  "seq.changed": "เปลี่ยนใน use case นี้",
+  "seq.unchanged": "ไม่เปลี่ยน"
 }

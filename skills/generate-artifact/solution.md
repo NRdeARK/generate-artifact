@@ -60,6 +60,12 @@ Per UC (Main first, then Affected):
 - **Arrow legend**: what each arrow means (call, async message, response, event…).
 - **Change track** (collapsed by default): what changed in this UC per version.
 
+### Marking what a use case adds or changes (sequence diagrams)
+- Every message group in a UC sequence diagram carries `data-step="<step label>"` (the same label as the arrow text and the touchpoint, e.g. `2`, `3b`, `4e`).
+- `usecases.json` UC field `step_changes` (optional) maps a step label to `added` or `changed`; anything missing is `unchanged`. No other value is valid.
+- Fill it from the code diff / plan: `added` = the arrow does not exist in the current code (new endpoint, new event, new write); `changed` = the arrow exists but its payload, guard or behaviour changes. Alt-fragment steps (`1b`, `4e`) count too.
+- The renderer recolours those arrows (added blue, changed amber, the same tokens as the component badges), adds a `+` / `~` marker beside the label, and shows an EN/TH legend above the diagram. Diagram labels stay English.
+
 ## Tab 5 — Components
 1. **All components, before and after, with data flow**: a side-by-side **architecture / data-flow diagram** (made with diagram-design), not just a grid of boxes. Every arrow between components is labelled with what flows (request, event, rows, email…). New or changed flows use the same change colors as components (new / changed / removed). The system-wide overview has one before/after pair per level, **L1 Context and L2 Containers only** (the switch swaps the pair; the same applies to the Tab 1 overview). **C4 L3 is components inside ONE container**, so it never joins the overview: it appears inside the owning container's card as "Inside <container> (C4 L3)" with its own before/after pair (a container with L3 views but no changes gets a compact card with an unchanged badge). Every before/after pair has an **Expand both** button: the viewer opens both diagrams side by side (stacked on narrow screens) with synced zoom and pan and a Sync toggle. Data: `registry.json` `views` (`{L1: {before, after}, L2: ...}`), per-container `views.L3`, L3 components declare `parent`. A level or container with components but no view is a validation warning; a global `views.L3` is an error (`l3-not-global`).
 2. **Per-component change** (each card starts with its own diagrams: a focused before/after pair, a type-specific extra, and optional logic flowcharts):

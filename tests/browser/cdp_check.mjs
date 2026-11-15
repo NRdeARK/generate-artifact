@@ -196,6 +196,16 @@ const tap = (x, y) => gesture(() => tapOnce(x, y));
 const drag = (x, y, dx, dy, steps) => gesture(() => dragOnce(x, y, dx, dy, steps));
 const pinch = (cx, cy, from, to, steps) => gesture(() => pinchOnce(cx, cy, from, to, steps));
 const near = (a, b, tol = 1.5) => Math.abs(a - b) <= tol;
+const stepProbe = (uc) => `(() => { const root = document.getElementById(${JSON.stringify(uc)}); const svg = root.querySelector("svg[data-reflow]");
+  const stroke = (sel) => { const el = svg.querySelector(sel); return el ? getComputedStyle(el).stroke : null; };
+  const legend = root.querySelector(".seq-legend");
+  const added = [...svg.querySelectorAll('g[data-change="added"]')], changed = [...svg.querySelectorAll('g[data-change="changed"]')];
+  const glyphs = (list, sign) => list.every((g) => [...g.querySelectorAll("text")].some((t) => t.textContent === sign && parseFloat(t.getAttribute("font-size")) >= 11));
+  return { addedStroke: added[0] && getComputedStyle(added[0].querySelector("line, path")).stroke, changedStroke: changed[0] && getComputedStyle(changed[0].querySelector("line, path")).stroke,
+    neutralStroke: stroke('g[data-step="6"] line'), nAdded: added.length, nChanged: changed.length,
+    addedGlyphs: glyphs(added, "+"), changedGlyphs: glyphs(changed, "~"),
+    legendText: legend ? legend.innerText.replace(/\\s+/g, " ").trim() : null, legendBottom: legend ? legend.getBoundingClientRect().bottom : null, svgTop: svg.getBoundingClientRect().top,
+    legendRight: legend ? Math.max(...[...legend.children].map((c) => c.getBoundingClientRect().right)) : null, cardRight: root.querySelector(".card").getBoundingClientRect().right }; })()`;
 const headerTop = () => ev(`document.querySelector(".top").getBoundingClientRect().top`);
 const scrollPage = async (y) => { await ev(`window.scrollTo(0, ${y})`); await sleep(550); };
 
@@ -342,6 +352,14 @@ async function main() {
   const phoneFocus = await headerTop();
   record("phone.header_shows_with_keyboard_focus", near(phoneFocus, 0, 0.5), `top with focus inside the bar=${phoneFocus}`);
   await ev("document.activeElement.blur()");
+
+
+  // ---- UC sequence diagrams: arrows this UC adds / changes (phone)
+  await goto("tab4");
+  const pseq = await ev(stepProbe("UC-02"));
+  record("phone.seq_changes_coloured_tagged_with_legend_that_fits", pseq.addedStroke === "rgb(31, 111, 168)" && pseq.changedStroke === "rgb(184, 120, 0)" && pseq.addedGlyphs && pseq.changedGlyphs
+    && /Added in this use case/.test(pseq.legendText) && pseq.legendBottom <= pseq.svgTop + 1 && pseq.legendRight <= pseq.cardRight + 1, JSON.stringify(pseq));
+  await screenshot("seq-changes-phone-tab4", "#UC-02 .card");
 
   // ---- CRUD matrix: same flipped treatment, pixel-clean sticky label column, cards on toggle
   await goto("tab1");
@@ -520,6 +538,30 @@ async function main() {
   await ev(`document.querySelector('.side a[href="#UC-03"]').click()`);
   await sleep(700);
   record("desktop.header_stays_shown_when_the_side_index_is_used", near(await headerTop(), 0, 0.5), `top after jumping via the side index=${await headerTop()} scrollY=${await ev("scrollY")}`);
+
+
+  // ---- UC sequence diagrams: arrows this UC adds / changes are coloured and tagged (desktop)
+  await goto("tab4");
+  const seq = await ev(stepProbe("UC-02"));
+  record("desktop.seq_added_changed_unchanged_use_two_colours_and_neutral", seq.addedStroke === "rgb(31, 111, 168)" && seq.changedStroke === "rgb(184, 120, 0)" && seq.neutralStroke === "rgb(94, 93, 89)"
+    && seq.nAdded >= 2 && seq.nChanged >= 2, JSON.stringify(seq));
+  record("desktop.seq_markers_not_colour_only_and_legend_above", seq.addedGlyphs && seq.changedGlyphs && /Added in this use case/.test(seq.legendText) && /Changed in this use case/.test(seq.legendText) && /Unchanged/.test(seq.legendText)
+    && seq.legendBottom <= seq.svgTop + 1, JSON.stringify({ g: [seq.addedGlyphs, seq.changedGlyphs], legend: seq.legendText, legendBottom: seq.legendBottom, svgTop: seq.svgTop }));
+  await ev(`document.querySelector('#UC-02 .tog[data-fragment="bad-queue"]').click()`);
+  await sleep(300);
+  const frag = await ev(`(() => { const g = document.querySelector('#UC-02 svg[data-reflow] [data-fragment="bad-queue"]'); const marked = [...g.querySelectorAll('g[data-change]')];
+    return { shown: g.getAttribute("display") !== "none" && g.getBoundingClientRect().height > 0, marked: marked.length, stroke: marked[0] && getComputedStyle(marked[0].querySelector("line, path")).stroke }; })()`);
+  record("desktop.seq_alt_fragment_arrows_are_marked_when_toggled_on", frag.shown && frag.marked >= 2 && frag.stroke === "rgb(31, 111, 168)", JSON.stringify(frag));
+  await screenshot("seq-changes-desktop-tab4", "#UC-02 .card");
+  await ev(`document.querySelector("#UC-02 .diagram .expand").click()`);
+  await sleep(500);
+  const viewerSeq = await ev(`(() => { const v = document.getElementById("viewer"); const legend = document.getElementById("viewer-legend"); const clone = v.querySelector("svg");
+    const changed = clone.querySelector('g[data-change="changed"] line, g[data-change="changed"] path');
+    return { open: !v.hidden, legendShown: !legend.hidden && /Added in this use case/.test(legend.innerText), cloneChanged: clone.querySelectorAll("g[data-change]").length, stroke: changed && getComputedStyle(changed).stroke, marker: changed && changed.getAttribute("marker-end") }; })()`);
+  record("desktop.seq_viewer_keeps_colours_markers_and_legend", viewerSeq.open && viewerSeq.legendShown && viewerSeq.cloneChanged >= 4 && viewerSeq.stroke === "rgb(184, 120, 0)" && /^url\(#v0-uc-02-arrow-changed\)$/.test(viewerSeq.marker || ""), JSON.stringify(viewerSeq));
+  await screenshot("seq-changes-desktop-viewer");
+  await ev(`document.querySelector('[data-viewer="close"]').click()`);
+  await sleep(200);
 
   // ============================================================ (3) Thai
   const GLYPHS = `(() => {

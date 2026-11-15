@@ -196,6 +196,10 @@
     mount(panes[0], svgs[0], compare ? labels[0] : "");
     if (compare) mount(panes[1], svgs[1], labels[1]);
     document.getElementById("viewer-caption").textContent = compare ? labels.join(" / ") : titleOf(svgs[0]);
+    var legendSource = !compare && svgs[0].closest(".card") ? svgs[0].closest(".card").querySelector(".seq-legend") : null;
+    var viewerLegend = document.getElementById("viewer-legend");
+    viewerLegend.innerHTML = legendSource ? legendSource.innerHTML : "";
+    viewerLegend.hidden = !legendSource;
     viewer.hidden = false;
     doc.classList.add("viewer-open");
     viewer.querySelector(".layout-seg").hidden = !compare;

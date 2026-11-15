@@ -163,5 +163,8 @@
   "tbl.view": "Table view",
   "col.usecase": "Use case",
   "col.description": "Description",
-  "t1.from": "From:"
+  "t1.from": "From:",
+  "seq.added": "Added in this use case",
+  "seq.changed": "Changed in this use case",
+  "seq.unchanged": "Unchanged"
 }

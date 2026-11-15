@@ -1336,10 +1336,10 @@ class BrowserCdpTests(unittest.TestCase):
         shots = Path(os.environ.get("CDP_SHOTS_DIR") or cls.tmp / "shots")
         script = REPO / "tests" / "browser" / "cdp_check.mjs"
         done = subprocess.run(["node", str(script), "--browser", sync.find_browser(), "--pages", str(artifact / "build"), "--shots", str(shots)],
-                              capture_output=True, text=True, encoding="utf-8", timeout=360)
+                              capture_output=True, text=True, encoding="utf-8", timeout=300)
         line = next((ln for ln in reversed(done.stdout.splitlines()) if ln.startswith("RESULT:")), None)
         if line is None:
-            raise AssertionError("cdp_check.mjs produced no result:\n" + done.stderr[-800:])
+            raise AssertionError("cdp_check.mjs produced no result (exit %s):" % done.returncode + chr(10) + "stdout: " + done.stdout[-400:] + chr(10) + "stderr: " + done.stderr[-800:])
         cls.results = json.loads(line[len("RESULT:"):])
         cls.shots = cls.results.pop("_shots", [])
 

@@ -23,7 +23,13 @@ const record = (name, ok, detail = "") => { results[name] = { ok: !!ok, detail: 
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-profile-"));
 const proc = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0",
   `--user-data-dir=${userDir}`, "about:blank"], { stdio: "ignore" });
-const watchdog = setTimeout(() => { console.error("cdp_check timed out"); cleanup(3); }, 280000);
+const watchdog = setTimeout(() => {
+  console.error("cdp_check timed out");
+  record("harness.error", false, "global watchdog: the run took longer than 240s");
+  results._shots = shotPaths;
+  console.log("RESULT:" + JSON.stringify(results));  // partial results still tell which checks passed
+  cleanup(3);
+}, 240000);
 
 function cleanup(code) {
   clearTimeout(watchdog);
@@ -55,7 +61,8 @@ ws.addEventListener("message", (event) => {
 });
 const send = (method, params = {}) => new Promise((resolve, reject) => {
   const id = nextId++;
-  pending.set(id, { resolve, reject });
+  const timer = setTimeout(() => { pending.delete(id); reject(new Error(`no answer to ${method} within 30s`)); }, 30000);
+  pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
   ws.send(JSON.stringify({ id, method, params }));
 });
 const waitEvent = (method, ms = 20000) => new Promise((resolve, reject) => {

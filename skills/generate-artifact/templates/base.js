@@ -65,7 +65,7 @@
 
   /* ---- diagram viewer: in-page overlay, one pane or two (compare), wheel/pinch zoom, drag to pan.
          No popups, no Fullscreen API (claude.ai pages run in a sandboxed frame). ---- */
-  var viewer, panes = [], sync = true, active = 0, lastTrigger, moved = false;
+  var viewer, panes = [], syncZoom = true, syncPan = true, active = 0, lastTrigger, moved = false;
   var pointers = {};
   var pinch = { pane: -1, dist: 0 };
 
@@ -82,11 +82,27 @@
 
   function livePanes() { return panes.filter(function (p) { return !p.el.hidden; }); }
 
-  function mirror(from) {
-    if (!sync) return;
+  /* zoom sync: the other pane takes the same scale, zooming around the same point of its own stage;
+     each pane keeps its own position */
+  function zoomOthers(from, cx, cy) {
+    if (!syncZoom) return;
     livePanes().forEach(function (p) {
       if (p === from) return;
-      p.v.s = from.v.s; p.v.x = from.v.x; p.v.y = from.v.y;
+      var k = from.v.s / p.v.s;
+      p.v.x = cx - (cx - p.v.x) * k;
+      p.v.y = cy - (cy - p.v.y) * k;
+      p.v.s = from.v.s;
+      apply(p);
+    });
+  }
+
+  /* pan sync: the other pane moves by the same screen delta; scales stay independent */
+  function panOthers(from, dx, dy) {
+    if (!syncPan) return;
+    livePanes().forEach(function (p) {
+      if (p === from) return;
+      p.v.x += dx;
+      p.v.y += dy;
       apply(p);
     });
   }
@@ -109,7 +125,7 @@
     p.v.y = cy - (cy - p.v.y) * k;
     p.v.s = s;
     apply(p);
-    mirror(p);
+    zoomOthers(p, cx, cy);
   }
 
   function zoomCenter(factor) {
@@ -150,10 +166,14 @@
     var compare = svgs.length > 1;
     panes[0].el.hidden = false;
     panes[1].el.hidden = !compare;
-    viewer.querySelector('[data-viewer="sync"]').hidden = !compare;
-    sync = true;
+    syncZoom = true;
+    syncPan = true;
     active = 0;
-    viewer.querySelector('[data-viewer="sync"]').setAttribute("aria-pressed", "true");
+    ["sync-zoom", "sync-pan"].forEach(function (name) {
+      var toggle = viewer.querySelector('[data-viewer="' + name + '"]');
+      toggle.hidden = !compare;
+      toggle.setAttribute("aria-pressed", "true");
+    });
     mount(panes[0], svgs[0], compare ? labels[0] : "");
     if (compare) mount(panes[1], svgs[1], labels[1]);
     document.getElementById("viewer-caption").textContent = compare ? labels.join(" / ") : titleOf(svgs[0]);
@@ -231,10 +251,11 @@
       if (pinch.dist) zoomAt(p, d / pinch.dist, e.clientX - r.left, e.clientY - r.top);
       pinch.dist = d;
     } else {
-      p.v.x += e.clientX - prev.x;
-      p.v.y += e.clientY - prev.y;
+      var dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+      p.v.x += dx;
+      p.v.y += dy;
       apply(p);
-      mirror(p);
+      panOthers(p, dx, dy);
     }
     moved = true;
   });
@@ -264,10 +285,13 @@
         if (name === "close") closeViewer();
         else if (name === "in") zoomCenter(1.25);
         else if (name === "out") zoomCenter(0.8);
-        else if (name === "sync") {
-          sync = !sync;
-          action.setAttribute("aria-pressed", String(sync));
-          if (sync) mirror(panes[active]);
+        else if (name === "sync-zoom") {
+          syncZoom = !syncZoom;
+          action.setAttribute("aria-pressed", String(syncZoom));
+          if (syncZoom) { var r = panes[active].stage.getBoundingClientRect(); zoomOthers(panes[active], r.width / 2, r.height / 2); }
+        } else if (name === "sync-pan") {
+          syncPan = !syncPan;
+          action.setAttribute("aria-pressed", String(syncPan));
         } else fitAll();
       } else if (e.target.classList.contains("viewer-stage") && !moved) {
         closeViewer();

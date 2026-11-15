@@ -65,9 +65,9 @@ Per UC (Main first, then Affected):
 2. **Per-component change** (each card starts with its own diagrams: a focused before/after pair, a type-specific extra, and optional logic flowcharts):
    - Diagrams (`change.diagrams`): `before`/`after` (the component, its direct neighbours and labelled flows, with new/changed/removed colored); `extra` for a db/store (ER schema diff with PK/FK and crow's-foot cardinality) or a queue (topology: producers, queue, DLQ, consumers); optional `flowchart: [{title, diagram}]` for how a feature decides (diamonds, yes/no branches, terminals). Missing before/after/extra is a warning; the flowchart is optional.
    - What changes and why (linked to UCs and decisions).
-   - Data changes: schema migrations, new tables/columns, indexes.
+   - Data changes: schema migrations, new tables/columns, indexes, plus a **data dictionary** for every new or changed table (collapsed by default, under the migration table): per column name, type, nullable, default, meaning in plain words, allowed values with what each means (enums), 2-3 sample values, a before -> after example for a changed column, and a small sample-rows table. Meanings are translated; sample values stay data.
    - Infra changes: new queues/topics (with counts), jobs, configs, permissions.
-   - **Files changed** (collapsed by default).
+   - **Files changed** (collapsed by default): each file carries its change type (added / modified / removed / renamed with old -> new path) as a +/~/- badge in the theme change colors, and the summary line counts them ("Files changed (4): 2 added, 1 modified, 1 removed").
 
 ---
 

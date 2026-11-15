@@ -591,7 +591,7 @@ class DiagramViewerTests(FixtureCase):
 
     def test_viewer_script_handles_keyboard_wheel_pointer_focus_and_avoids_popups(self):
         js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
-        for needle in ("Escape", "wheel", "pointerdown", "pointermove", "lastTrigger.focus()", "viewer-stage", "data-compare", "mirror("):
+        for needle in ("Escape", "wheel", "pointerdown", "pointermove", "lastTrigger.focus()", "viewer-stage", "data-compare", "syncZoom", "syncPan"):
             self.assertIn(needle, js)
         self.assertNotIn("window.open", js)
         self.assertNotRegex(js, r"(?<!try \{ )requestFullscreen\(")
@@ -887,7 +887,7 @@ class ComponentDiagramTests(FixtureCase):
         return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
 
     def card(self, text, cid):
-        return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details|</section>)', text, re.S).group(0)
+        return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
 
     def test_every_changing_component_has_diagrams_at_the_top_of_its_card(self):
         text = self.tab5()
@@ -953,38 +953,63 @@ class PairCompareTests(FixtureCase):
         document = sync.Site(project, print_mode=True).print_document(["tab5"])
         self.assertNotIn('class="expand-both"', document)
 
+    def test_expand_both_button_sits_under_the_pair_centered_across_both_columns(self):
+        text = self.tab5()
+        for pair in re.findall(r'<div class="ba-cols"[^>]*>.*?</button>\s*</div>', text, re.S):
+            self.assertGreater(pair.index('class="expand-both"'), pair.rindex('<div class="pair-side">'))
+            self.assertEqual(pair.count('<div class="pair-side">'), 2)
+        self.assertEqual(len(re.findall(r'class="expand-both"', text)), 9)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.expand-both \{[^}]*grid-column: 1 / -1; justify-self: center;")
+
     def test_pairs_stack_below_1500px_and_viewer_stacks_in_portrait(self):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertIn("@media (max-width: 1500px) { .ba-cols { grid-template-columns: 1fr; } }", css)
         self.assertIn("max-aspect-ratio: 1/1", css)
         self.assertIn(".viewer-panes { flex-direction: column; }", css)
 
-    def test_compare_labels_and_sync_button_are_in_every_page(self):
+    def test_compare_labels_and_two_sync_toggles_are_in_every_page(self):
         text = self.tab5()
-        self.assertIn('data-viewer="sync"', text)
-        self.assertIn("Expand both", text)
-        self.assertIn("ขยายทั้งคู่", text)
+        self.assertEqual(len(re.findall(r'data-viewer="sync-zoom" aria-pressed="true"', text)), 1)
+        self.assertEqual(len(re.findall(r'data-viewer="sync-pan" aria-pressed="true"', text)), 1)
+        self.assertNotIn('data-viewer="sync"', text)
+        for label in ("Expand both", "ขยายทั้งคู่", "Sync zoom", "ซิงก์ซูม", "Sync pan", "ซิงก์การเลื่อน"):
+            self.assertIn(label, text)
 
     @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
-    def test_in_browser_compare_synced_zoom_unsync_close_and_focus(self):
+    def test_in_browser_compare_zoom_and_pan_sync_independently(self):
         probe = """var btn=document.querySelector('.ba-cols:not([hidden]) .expand-both'); btn.focus(); btn.click();
 var v=document.getElementById('viewer'), panes=v.querySelectorAll('.viewer-pane'), imgs=v.querySelectorAll('.viewer-img');
+var stages=[panes[0].querySelector('.viewer-stage'), panes[1].querySelector('.viewer-stage')];
+var zbtn=document.querySelector('[data-viewer=sync-zoom]'), pbtn=document.querySelector('[data-viewer=sync-pan]');
 out.push('open='+(!v.hidden)); out.push('two='+(!panes[1].hidden));
 out.push('labels='+Array.prototype.map.call(v.querySelectorAll('.pane-label'),function(l){return l.textContent}).join('/'));
-function same(){return imgs[0].style.transform===imgs[1].style.transform}
-out.push('start='+same());
-document.querySelector('[data-viewer=in]').click(); out.push('buttons='+same());
-var stage=panes[0].querySelector('.viewer-stage');
-stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true})); out.push('wheel='+same());
-var sy=document.querySelector('[data-viewer=sync]'); sy.click(); out.push('unsynced='+sy.getAttribute('aria-pressed'));
-stage.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true})); out.push('independent='+(!same()));
-sy.click(); out.push('relinked='+same());
-document.querySelector('[data-viewer=reset]').click(); out.push('fit='+same());
+out.push('defaults='+zbtn.getAttribute('aria-pressed')+'/'+pbtn.getAttribute('aria-pressed'));
+function parse(i){var m=/translate\(([-\d.e]+)px,\s*([-\d.e]+)px\)\s*scale\(([-\d.e]+)\)/.exec(imgs[i].style.transform);return {x:+m[1],y:+m[2],s:+m[3]}}
+function setBtn(b,on){if((b.getAttribute('aria-pressed')==='true')!==on)b.click()}
+function drag(i,dx,dy){stages[i].dispatchEvent(new PointerEvent('pointerdown',{pointerId:7,clientX:300,clientY:300,bubbles:true}));document.dispatchEvent(new PointerEvent('pointermove',{pointerId:7,clientX:300+dx,clientY:300+dy,bubbles:true}));document.dispatchEvent(new PointerEvent('pointerup',{pointerId:7,bubbles:true}))}
+function wheel(i){stages[i].dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true}))}
+function near(a,b){return Math.abs(a-b)<0.01}
+[[true,true],[true,false],[false,true],[false,false]].forEach(function(c){
+  document.querySelector('[data-viewer=reset]').click();
+  setBtn(zbtn,false); setBtn(pbtn,false); drag(1,60,40);
+  setBtn(zbtn,c[0]); setBtn(pbtn,c[1]);
+  var a0=parse(0), a1=parse(1); wheel(0); var b0=parse(0), b1=parse(1);
+  var zoomOk=b0.s>a0.s && (c[0] ? (near(b1.s,b0.s) && !near(b1.x,b0.x)) : (near(b1.s,a1.s) && near(b1.x,a1.x) && near(b1.y,a1.y)));
+  drag(0,30,20); var d0=parse(0), d1=parse(1);
+  var panOk=near(d0.x-b0.x,30) && near(d0.y-b0.y,20) && near(d0.s,b0.s) && near(d1.s,b1.s) && (c[1] ? (near(d1.x-b1.x,30) && near(d1.y-b1.y,20)) : (near(d1.x,b1.x) && near(d1.y,b1.y)));
+  out.push('z'+(+c[0])+'p'+(+c[1])+'=zoom:'+zoomOk+',pan:'+panOk);
+});
+setBtn(zbtn,false); setBtn(pbtn,false); wheel(0);
+document.querySelector('[data-viewer=reset]').click(); out.push('fit='+(imgs[0].style.transform===imgs[1].style.transform));
+setBtn(zbtn,true); setBtn(pbtn,true); out.push('relinked='+zbtn.getAttribute('aria-pressed')+'/'+pbtn.getAttribute('aria-pressed'));
 document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); out.push('closed='+v.hidden); out.push('focus='+(document.activeElement===btn));
 btn.click(); document.querySelector('[data-viewer=close]').click(); out.push('xclose='+v.hidden);
-var one=document.querySelector('.diagram .expand'); one.click(); out.push('single='+(!v.hidden)+'/'+panes[1].hidden); document.querySelector('[data-viewer=close]').click()"""
+var one=document.querySelector('.diagram .expand'); one.click(); out.push('single='+(!v.hidden)+'/'+panes[1].hidden+'/'+document.querySelector('[data-viewer=sync-zoom]').hidden); document.querySelector('[data-viewer=close]').click()"""
         result = run_probe(self.tab5(), probe, self.dir / "build" / "probe-compare.html", "1300,1000")
-        self.assertEqual(result, "open=true;two=true;labels=Before/After;start=true;buttons=true;wheel=true;unsynced=false;independent=true;relinked=true;fit=true;closed=true;focus=true;xclose=true;single=true/true")
+        self.assertEqual(result, "open=true;two=true;labels=Before/After;defaults=true/true;"
+                                 "z1p1=zoom:true,pan:true;z1p0=zoom:true,pan:true;z0p1=zoom:true,pan:true;z0p0=zoom:true,pan:true;"
+                                 "fit=true;relinked=true/true;closed=true;focus=true;xclose=true;single=true/true/true")
 
 
 class OptionCardContrastTests(FixtureCase):
@@ -1038,6 +1063,134 @@ class LayoutRuleTests(FixtureCase):
         text = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
         d3 = text.split('id="D3"')[1]
         self.assertGreaterEqual(d3.count('class="expand"'), 2)
+
+class FilesChangedTests(FixtureCase):
+    def card(self, cid):
+        run("render", str(self.dir), "--tabs", "tab5")
+        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
+
+    def test_summary_line_counts_each_change_type(self):
+        for cid, expected in (("CMP-AGG", "Files changed (4): 4 added"), ("CMP-CRON", "Files changed (1): 1 removed"),
+                              ("CMP-WEB", "Files changed (5): 2 added, 1 modified, 1 removed, 1 renamed"),
+                              ("CMP-DB", "Files changed (4): 3 added, 1 modified")):
+            with self.subTest(component=cid):
+                self.assertIn(expected, re.sub(r"<[^>]+>", "", self.card(cid)).replace("\n", " "))
+
+    def test_thai_summary_and_labels(self):
+        text = re.sub(r"<[^>]+>", "", self.card("CMP-WEB"))
+        self.assertIn("ไฟล์ที่เปลี่ยน (5): เพิ่ม 2, แก้ไข 1, ลบ 1, เปลี่ยนชื่อ 1", text)
+
+    def test_each_file_has_a_theme_colored_badge_and_a_marker(self):
+        card = self.card("CMP-WEB")
+        for status, marker in (("new", "+"), ("changed", "~"), ("removed", "-")):
+            self.assertRegex(card, rf'<span class="badge {status}"><span aria-hidden="true">{re.escape(marker)}</span>')
+        self.assertIn("web/src/pages/Project.tsx", card)  # old path of the rename
+        self.assertIn("web/src/pages/ProjectPage.tsx", card)
+        self.assertRegex(card, r'<span class="badge changed"><span aria-hidden="true">&rarr;</span>')
+
+    def test_removed_file_path_is_struck_through_by_css_class(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.file-removed code \{[^}]*line-through")
+        self.assertIn('class="file-removed"', self.card("CMP-CRON"))
+
+    def test_plain_string_files_still_work_as_modified_with_a_warning(self):
+        def change(d):
+            next(c for c in d["components"] if c["id"] == "CMP-CRON")["change"]["files"] = ["jobs/weekly_export.py", "jobs/other.py"]
+        self.edit("registry.json", change)
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("file-change-type-missing", codes)
+        self.assertIn("CMP-CRON", out)
+        self.assertIn("Files changed (2): 2 modified", re.sub(r"<[^>]+>", "", self.card("CMP-CRON")).replace("\n", " "))
+
+    def test_bad_change_type_and_rename_without_from_are_errors(self):
+        def change(d):
+            files = next(c for c in d["components"] if c["id"] == "CMP-AGG")["change"]["files"]
+            files[0]["change"] = "deleted"
+            files[1].update(change="renamed")
+        self.edit("registry.json", change)
+        code, codes, _ = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-file-change", codes)
+        self.assertIn("file-rename-no-from", codes)
+
+    def test_fixture_has_no_file_warnings_and_print_keeps_the_list_open(self):
+        self.assertNotIn("file-change-type-missing", self.codes()[1])
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(["tab5"])
+        self.assertEqual(re.findall(r"<details(?![^>]*\bopen\b)[^>]*>", document), [])
+
+class DataDictionaryTests(FixtureCase):
+    def db_card(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        return re.search(r'<details class="card comp \w+" id="CMP-DB"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
+
+    def test_one_collapsed_dictionary_per_new_or_changed_table_under_the_migration_table(self):
+        card = self.db_card()
+        self.assertEqual(re.findall(r'<details class="dict" >', card), ['<details class="dict" >'] * 2)
+        self.assertLess(card.index("Data change"), card.index('class="dictionary"'))
+        self.assertLess(card.index('class="dictionary"'), card.index("Infra change"))
+        summaries = re.findall(r'<details class="dict" >\s*<summary>(.*?)</summary>', card, re.S)
+        self.assertIn("projects", summaries[0])
+        self.assertIn("status_history", summaries[1])
+
+    def test_enum_values_are_described_one_by_one(self):
+        card = self.db_card()
+        for value, meaning in (("on_track", "Work is going as planned."), ("at_risk", "May miss the date unless something changes."),
+                               ("blocked", "Cannot continue until something is resolved."), ("done", "Finished.")):
+            self.assertRegex(card, rf"<code>{value}</code> = [^\n]*{re.escape(meaning)}")
+
+    def test_columns_show_type_nullable_default_meaning_and_samples(self):
+        card = re.sub(r"<[^>]+>", " ", self.db_card())
+        for needle in ("status_updated_at", "timestamptz", "now()", "2026-11-15T09:41:07Z", "gen_random_uuid()", "Who made the change; empty for system changes."):
+            self.assertIn(needle, card)
+        self.assertIn("Column", card)
+        self.assertIn("Nullable", card)
+        self.assertIn("Default", card)
+        self.assertIn("Allowed values", card)
+
+    def test_changed_column_shows_a_before_to_after_example(self):
+        card = self.db_card()
+        self.assertRegex(card, r"<code>status</code>: <code>&#x27;green&#x27; \(text\)</code> &rarr; <code>&#x27;on_track&#x27; \(enum\)</code>")
+
+    def test_each_table_has_three_sample_rows(self):
+        card = self.db_card()
+        tables = re.findall(r"<span class=\"lbl\"><span data-l=\"en\">Sample rows</span>.*?</table>", card, re.S)
+        self.assertEqual(len(tables), 2)
+        for table in tables:
+            self.assertEqual(table.count("<td>") // table.count("<th>"), 3)
+        self.assertIn("<th>changed_by</th>", tables[1])
+
+    def test_thai_meanings_but_samples_stay_data(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        self.assertIn("งานเป็นไปตามแผน", text)
+        entries = sync.content_entries(sync.load_project(self.dir))["CMP-DB"]
+        self.assertTrue(any(path.endswith("values.0.meaning") for path in entries))
+        self.assertFalse(any("samples" in path or "sample_rows" in path or path.endswith(".default") for path in entries))
+
+    def test_new_or_changed_column_without_a_meaning_is_a_warning(self):
+        def change(d):
+            table = next(c for c in d["components"] if c["id"] == "CMP-DB")["change"]["data_dictionary"]["tables"][1]
+            table["columns"][2].pop("meaning")
+        self.edit("registry.json", change)
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("column-meaning-missing", codes)
+        self.assertIn("status_history.status", out)
+
+    def test_removed_column_needs_no_meaning_and_fixture_is_clean(self):
+        def change(d):
+            table = next(c for c in d["components"] if c["id"] == "CMP-DB")["change"]["data_dictionary"]["tables"][0]
+            table["columns"].append({"name": "last_export_at", "change": "removed", "type": "timestamptz"})
+        self.edit("registry.json", change)
+        self.assertNotIn("column-meaning-missing", self.codes()[1])
+
+    def test_print_opens_every_dictionary_table(self):
+        document = sync.Site(sync.load_project(self.dir), print_mode=True).print_document(["tab5"])
+        self.assertEqual(len(re.findall(r'<details class="dict" open>', document)), 2)
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

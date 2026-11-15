@@ -142,6 +142,13 @@ body.print .side { display: none; }
 body.print .main-col { padding-left: 0; }
 @media print { body { background: var(--surface); } .card { box-shadow: none; break-inside: avoid; } .expand, .expand-both, .viewer { display: none !important; } }
 body.print .expand, body.print .viewer { display: none; }
+.files { list-style: none; padding-left: 0; }
+.files li { margin: 4px 0; }
+.file-removed code { text-decoration: line-through; }
+.dict { margin: 8px 0; }
+.dict > summary { cursor: pointer; }
+.nowrap { white-space: nowrap; }
+.dict-cols td { vertical-align: top; }
 @media (max-width: 760px) {
   .blk, .grid3 { grid-template-columns: 1fr; }
   .split { flex-direction: column; }
@@ -160,7 +167,7 @@ body.print .expand, body.print .viewer { display: none; }
 /* before / after pairs: side by side on wide screens, stacked below 1100px */
 .ba-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .pair-side { min-width: 0; }
-.expand-both { grid-column: 1 / -1; justify-self: start; font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
+.expand-both { grid-column: 1 / -1; justify-self: center; font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
 .expand-both:hover, .expand-both:focus-visible { background: var(--tab-hover-bg); outline: none; }
 .expand-both:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (max-width: 1500px) { .ba-cols { grid-template-columns: 1fr; } }

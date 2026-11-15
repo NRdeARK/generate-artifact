@@ -54,7 +54,7 @@ INTENT_SECTIONS = {"what": "What", "why": "Why", "before": "Before state",
 INTENT_DIAGRAM = "diagrams/intent.svg"
 # Only these keys hold translatable prose; IDs, names, enums and code are never translated.
 TEXT_KEYS = {"title", "summary", "what", "why", "reason", "pros", "cons", "cost", "risk",
-             "sees", "terms", "label", "choice_reason", "revisit_when", "text"}
+             "sees", "terms", "label", "choice_reason", "revisit_when", "text", "meaning"}
 
 log = logging.getLogger("artifact_sync")
 esc = html.escape
@@ -231,6 +231,8 @@ ID_PATTERNS = {
     "outcome": r"O\d+",
 }
 CHANGING = ("changed", "new", "removed")
+# file change type -> (theme status class, marker readable without color)
+FILE_CHANGES = {"added": ("new", "+"), "modified": ("changed", "~"), "removed": ("removed", "-"), "renamed": ("changed", "\u2192")}
 STORE_KINDS = ("db", "store")
 ARTIFACT_AUTHORITY = "claude.ai"
 
@@ -314,6 +316,17 @@ def resolve_diagram(root, rel):
         return None, "points outside the project folder"
     return path, None
 
+def file_entries(change):
+    """Normalize change.files: plain strings count as 'modified' (legacy), objects keep path/change/from."""
+    entries = []
+    for item in (change or {}).get("files") or []:
+        if isinstance(item, str):
+            entries.append({"path": item, "change": "modified", "legacy": True})
+        elif isinstance(item, dict):
+            entries.append({"path": item.get("path", ""), "change": item.get("change"), "from": item.get("from"), "legacy": False})
+    return entries
+
+
 def string_ids(items):
     """The IDs that are strings. Other IDs are reported by check_ids and never used as keys."""
     return {i["id"]: i for i in items if isinstance(i.get("id"), str)}
@@ -374,6 +387,21 @@ def check_registry(project):
                                        f"component change has no {field}. Add change.{field} or a non-blank text reason in change.waive.{field}."))
             out += _unknown("registry.json", cid, change.get("ucs"), known["uc"], "UC")
             out += _unknown("registry.json", cid, change.get("decisions"), known["decision"], "decision")
+            for table in (change.get("data_dictionary") or {}).get("tables") or []:
+                for column in table.get("columns") or []:
+                    if column.get("change") in ("new", "changed") and not column.get("meaning"):
+                        out.append(Finding("warning", "column-meaning-missing", f"registry.json {cid} {table.get('table')}.{column.get('name')}",
+                                           "a new or changed column needs a meaning in plain words (and allowed values for an enum)."))
+            files = file_entries(change)
+            if any(f["legacy"] for f in files):
+                out.append(Finding("warning", "file-change-type-missing", f"registry.json {cid}",
+                                   f"{sum(f['legacy'] for f in files)} file(s) are plain strings. Use {{path, change: added|modified|removed|renamed}}."))
+            for f in files:
+                if not f["legacy"] and f["change"] not in FILE_CHANGES:
+                    out.append(Finding("error", "bad-file-change", f"registry.json {cid} {f['path']}",
+                                       f"change {f['change']!r} must be one of {', '.join(FILE_CHANGES)}."))
+                elif f["change"] == "renamed" and not f["from"]:
+                    out.append(Finding("error", "file-rename-no-from", f"registry.json {cid} {f['path']}", "a renamed file needs from (its old path)."))
     views = project.registry.get("views") if isinstance(project.registry.get("views"), dict) else {}
     if "L3" in views:
         out.append(Finding("error", "l3-not-global", "registry.json views.L3",
@@ -819,6 +847,56 @@ class Site:
         expand = "" if self.print_mode else self.part("expand_button", label=esc(self.ui_plain("diagram.expand"), quote=True))
         return self.part("diagram", svg=svg, maxw=width or 1200, expand=expand)
 
+    def dictionary(self, cid, change):
+        """Data dictionary: one collapsed block per new or changed table (columns, allowed values, samples, example rows)."""
+        tables = (change.get("data_dictionary") or {}).get("tables") or []
+        blocks = []
+        for ti, table in enumerate(tables):
+            base = f"data_dictionary.tables.{ti}"
+            rows, examples = [], []
+            for ci, col in enumerate(table.get("columns") or []):
+                status = {"new": "new", "changed": "changed", "removed": "removed"}.get(col.get("change"), "unchanged")
+                marker = {"new": "+", "changed": "~", "removed": "-"}.get(col.get("change"), "")
+                values = "".join(self.part("dict_value", value=esc(str(v.get("value", ""))), meaning=self.tx(cid, f"{base}.columns.{ci}.values.{vi}.meaning"))
+                                 for vi, v in enumerate(col.get("values") or []))
+                nullable = col.get("nullable")
+                rows.append(self.part(
+                    "dict_row", status=status, marker=marker, name=esc(str(col.get("name", ""))), type=esc(str(col.get("type", ""))),
+                    nullable="" if nullable is None else self.ui("dict.yes" if nullable else "dict.no"),
+                    default=esc(str(col.get("default", "-"))), meaning=self.tx(cid, f"{base}.columns.{ci}.meaning"), values=values,
+                    samples=", ".join(f"<code>{esc(str(v))}</code>" for v in col.get("samples") or [])))
+                example = col.get("example")
+                if isinstance(example, dict):
+                    examples.append(self.part("dict_example", column=esc(str(col.get("name", ""))), before=esc(str(example.get("before", ""))), after=esc(str(example.get("after", "")))))
+            sample = table.get("sample_rows") or {}
+            sample_html = self.part(
+                "dict_samples", heads="".join(f"<th>{esc(str(h))}</th>" for h in sample.get("columns") or []),
+                rows="".join("<tr>" + "".join(f"<td>{esc(str(cell))}</td>" for cell in row) + "</tr>" for row in sample.get("rows") or [])) if sample.get("rows") else ""
+            status = table.get("status", "changed")
+            blocks.append(self.part(
+                "dict_table", open_attr=self.open_attr(), table=esc(str(table.get("table", ""))), badge=self.part("badge", status=esc(status), label=self.ui(f"status.{status}")),
+                count=self.ui_fmt("dict.columns", n=len(table.get("columns") or [])), rows="".join(rows), examples="".join(examples), sample_rows=sample_html))
+        return self.part("dictionary", tables="".join(blocks)) if blocks else ""
+
+    def file_item(self, entry):
+        status, marker = FILE_CHANGES.get(entry["change"], FILE_CHANGES["modified"])
+        key = f"filechange.{entry['change'] if entry['change'] in FILE_CHANGES else 'modified'}"
+        word = self.bi(self.ui_en[key], self.ui_th.get(key))
+        path = f"<code>{esc(entry['from'])}</code> &rarr; <code>{esc(entry['path'])}</code>" if entry["change"] == "renamed" and entry.get("from") else f"<code>{esc(entry['path'])}</code>"
+        return self.part("file_item", status=status, marker=esc(marker).replace("\u2192", "&rarr;"), word=word, path=path,
+                         cls="file-removed" if entry["change"] == "removed" else "file")
+
+    def files_summary(self, entries):
+        """'Files changed (4): 2 added, 1 modified' in both languages."""
+        counts = {kind: sum(1 for e in entries if e["change"] == kind) for kind in FILE_CHANGES}
+        for e in entries:
+            if e["change"] not in FILE_CHANGES:
+                counts["modified"] += 1
+        def line(ui):
+            parts = ", ".join(ui[f"filesummary.{kind}"].format(n=n) for kind, n in counts.items() if n)
+            return f"{ui['t5.files']} ({len(entries)}): {parts}"
+        return self.bi(line(self.ui_en), line({**self.ui_en, **self.ui_th}))
+
     def svg_root_id(self, rel):
         clean, _ = read_diagram(self.p.root, rel) if rel else (None, [])
         match = re.search(r'<svg[^>]*\sid="([^"]+)"', clean or "")
@@ -993,12 +1071,12 @@ class Site:
         if changing:
             data = "".join(self.part("row3", a=esc(r.get("object", "")), b=esc(r.get("change", "")), c=esc(r.get("migration", ""))) for r in change.get("data", []))
             infra = "".join(self.part("row3", a=esc(r.get("item", "")), b=esc(str(r.get("before", ""))), c=esc(str(r.get("after", "")))) for r in change.get("infra", []))
-            files = change.get("files", [])
+            files = file_entries(change)
             detail = self.part(
                 "component_detail", what=self.tx_block(cid, "what"), why=self.tx_block(cid, "why"),
                 links=", ".join(filter(None, [self.refs(change.get("decisions")), self.refs(change.get("ucs"))])),
-                data=self.part("data_table", rows=data) if data else "", infra=self.part("infra_table", rows=infra) if infra else "",
-                files=self.part("files", open_attr=self.open_attr(), count=len(files), items="".join(self.part("file_item", path=esc(f)) for f in files)) if files else "")
+                data=(self.part("data_table", rows=data) if data else "") + self.dictionary(cid, change), infra=self.part("infra_table", rows=infra) if infra else "",
+                files=self.part("files", open_attr=self.open_attr(), summary=self.files_summary(files), items="".join(self.file_item(f) for f in files)) if files else "")
         return self.part(
             "component", id=esc(cid or ""), status=esc(status), name=esc(comp.get("name", "")), level=esc(comp.get("c4_level", "")),
             open_attr="open" if status == "changed" or self.print_mode else "", badge=self.part("badge", status=esc(status), label=self.ui(f"status.{status}")),
@@ -1015,7 +1093,7 @@ class Site:
         title, header_extra, content = self.content(tab)
         label = self.ui("page.intent" if tab == "intent" else "page.solution")
         nav_intent, nav_solution = self.nav(tab)
-        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync")}
+        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync_zoom", "sync_pan")}
         return self.fill(
             self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),

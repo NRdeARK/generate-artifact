@@ -167,10 +167,21 @@
     }
   },
   "CMP-DB": {
-    "source_hash": "bbfbdc2ea669",
+    "source_hash": "cbd91cd3d2af",
     "text": {
       "what": "เพิ่มเวลาของสถานะและตารางประวัติสถานะแบบเพิ่มอย่างเดียว",
-      "why": "ความสดต้องมีเวลา และการเก็บประวัติมาแทนการจดในสเปรดชีตด้วยมือ"
+      "why": "ความสดต้องมีเวลา และการเก็บประวัติมาแทนการจดในสเปรดชีตด้วยมือ",
+      "data_dictionary.tables.0.columns.0.meaning": "สถานะปัจจุบันของโปรเจกต์ ตามที่หัวหน้าโปรเจกต์เลือก",
+      "data_dictionary.tables.0.columns.0.values.0.meaning": "งานเป็นไปตามแผน",
+      "data_dictionary.tables.0.columns.0.values.1.meaning": "อาจไม่ทันกำหนด หากไม่มีอะไรเปลี่ยน",
+      "data_dictionary.tables.0.columns.0.values.2.meaning": "ทำต่อไม่ได้จนกว่าจะแก้ปัญหาบางอย่าง",
+      "data_dictionary.tables.0.columns.0.values.3.meaning": "เสร็จสิ้น",
+      "data_dictionary.tables.0.columns.1.meaning": "เวลาที่สถานะเปลี่ยนล่าสุด หน้าเว็บแสดงเป็น อัปเดตเมื่อ 3 วินาทีที่แล้ว",
+      "data_dictionary.tables.1.columns.0.meaning": "รหัสเฉพาะของแถวประวัตินี้",
+      "data_dictionary.tables.1.columns.1.meaning": "โปรเจกต์ที่สถานะเปลี่ยน",
+      "data_dictionary.tables.1.columns.2.meaning": "สถานะที่โปรเจกต์เปลี่ยนไป",
+      "data_dictionary.tables.1.columns.3.meaning": "เวลาที่ทำการเปลี่ยน",
+      "data_dictionary.tables.1.columns.4.meaning": "ผู้ทำการเปลี่ยน เว้นว่างหากเป็นการเปลี่ยนโดยระบบ"
     }
   },
   "CMP-QUEUE": {

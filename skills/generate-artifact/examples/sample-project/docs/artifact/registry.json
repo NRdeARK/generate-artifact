@@ -48,9 +48,27 @@
           "D3"
         ],
         "files": [
-          "web/src/pages/StatusPage.tsx",
-          "web/src/components/StatusCard.tsx",
-          "web/src/api/projects.ts"
+          {
+            "path": "web/src/pages/StatusPage.tsx",
+            "change": "added"
+          },
+          {
+            "path": "web/src/components/StatusCard.tsx",
+            "change": "added"
+          },
+          {
+            "path": "web/src/api/projects.ts",
+            "change": "modified"
+          },
+          {
+            "path": "web/src/pages/ProjectPage.tsx",
+            "change": "renamed",
+            "from": "web/src/pages/Project.tsx"
+          },
+          {
+            "path": "web/src/pages/LegacyStatus.tsx",
+            "change": "removed"
+          }
         ],
         "diagrams": {
           "before": "diagrams/comp-cmp-web-before.svg",
@@ -129,14 +147,212 @@
           }
         ],
         "files": [
-          "db/migrations/0042_add_status_ts.sql",
-          "db/migrations/0043_history.sql",
-          "db/migrations/0044_drop_export_ts.sql"
+          {
+            "path": "db/migrations/0042_add_status_ts.sql",
+            "change": "added"
+          },
+          {
+            "path": "db/migrations/0043_history.sql",
+            "change": "added"
+          },
+          {
+            "path": "db/migrations/0044_drop_export_ts.sql",
+            "change": "added"
+          },
+          {
+            "path": "db/schema.sql",
+            "change": "modified"
+          }
         ],
         "diagrams": {
           "before": "diagrams/comp-cmp-db-before.svg",
           "after": "diagrams/comp-cmp-db-after.svg",
           "extra": "diagrams/comp-cmp-db-extra.svg"
+        },
+        "data_dictionary": {
+          "tables": [
+            {
+              "table": "projects",
+              "status": "changed",
+              "columns": [
+                {
+                  "name": "status",
+                  "change": "changed",
+                  "type": "enum project_status",
+                  "nullable": false,
+                  "default": "on_track",
+                  "meaning": "Where the project stands right now, as chosen by its lead.",
+                  "values": [
+                    {
+                      "value": "on_track",
+                      "meaning": "Work is going as planned."
+                    },
+                    {
+                      "value": "at_risk",
+                      "meaning": "May miss the date unless something changes."
+                    },
+                    {
+                      "value": "blocked",
+                      "meaning": "Cannot continue until something is resolved."
+                    },
+                    {
+                      "value": "done",
+                      "meaning": "Finished."
+                    }
+                  ],
+                  "samples": [
+                    "on_track",
+                    "at_risk",
+                    "blocked"
+                  ],
+                  "example": {
+                    "before": "'green' (text)",
+                    "after": "'on_track' (enum)"
+                  }
+                },
+                {
+                  "name": "status_updated_at",
+                  "change": "new",
+                  "type": "timestamptz",
+                  "nullable": false,
+                  "default": "now()",
+                  "meaning": "When the status last changed; the page shows it as Updated 3s ago.",
+                  "samples": [
+                    "2026-11-15T09:41:07Z",
+                    "2026-11-14T16:02:55Z",
+                    "2026-11-10T08:00:00Z"
+                  ]
+                }
+              ],
+              "sample_rows": {
+                "columns": [
+                  "id",
+                  "name",
+                  "status",
+                  "status_updated_at"
+                ],
+                "rows": [
+                  [
+                    "7d1c0e52",
+                    "Checkout redesign",
+                    "on_track",
+                    "2026-11-15T09:41:07Z"
+                  ],
+                  [
+                    "b93a41f0",
+                    "Billing export",
+                    "at_risk",
+                    "2026-11-14T16:02:55Z"
+                  ],
+                  [
+                    "2e84d6aa",
+                    "Mobile app",
+                    "blocked",
+                    "2026-11-10T08:00:00Z"
+                  ]
+                ]
+              }
+            },
+            {
+              "table": "status_history",
+              "status": "new",
+              "columns": [
+                {
+                  "name": "id",
+                  "change": "new",
+                  "type": "uuid",
+                  "nullable": false,
+                  "default": "gen_random_uuid()",
+                  "meaning": "Unique id of this history row.",
+                  "samples": [
+                    "5f0a91c3",
+                    "a2b7e640",
+                    "c81d3f19"
+                  ]
+                },
+                {
+                  "name": "project_id",
+                  "change": "new",
+                  "type": "uuid",
+                  "nullable": false,
+                  "default": "-",
+                  "meaning": "The project whose status changed.",
+                  "samples": [
+                    "7d1c0e52",
+                    "b93a41f0",
+                    "2e84d6aa"
+                  ]
+                },
+                {
+                  "name": "status",
+                  "change": "new",
+                  "type": "enum project_status",
+                  "nullable": false,
+                  "default": "-",
+                  "meaning": "The status the project moved to.",
+                  "samples": [
+                    "on_track",
+                    "at_risk",
+                    "blocked"
+                  ]
+                },
+                {
+                  "name": "changed_at",
+                  "change": "new",
+                  "type": "timestamptz",
+                  "nullable": false,
+                  "default": "now()",
+                  "meaning": "When the change was made.",
+                  "samples": [
+                    "2026-11-15T09:41:07Z",
+                    "2026-11-14T16:02:55Z",
+                    "2026-11-10T08:00:00Z"
+                  ]
+                },
+                {
+                  "name": "changed_by",
+                  "change": "new",
+                  "type": "uuid",
+                  "nullable": true,
+                  "default": "NULL",
+                  "meaning": "Who made the change; empty for system changes.",
+                  "samples": [
+                    "u-ana",
+                    "u-bo",
+                    "NULL"
+                  ]
+                }
+              ],
+              "sample_rows": {
+                "columns": [
+                  "project_id",
+                  "status",
+                  "changed_at",
+                  "changed_by"
+                ],
+                "rows": [
+                  [
+                    "7d1c0e52",
+                    "on_track",
+                    "2026-11-15T09:41:07Z",
+                    "u-ana"
+                  ],
+                  [
+                    "b93a41f0",
+                    "at_risk",
+                    "2026-11-14T16:02:55Z",
+                    "u-bo"
+                  ],
+                  [
+                    "2e84d6aa",
+                    "blocked",
+                    "2026-11-10T08:00:00Z",
+                    "NULL"
+                  ]
+                ]
+              }
+            }
+          ]
         }
       }
     },
@@ -168,7 +384,14 @@
           }
         ],
         "files": [
-          "infra/queue.tf"
+          {
+            "path": "infra/queue.tf",
+            "change": "modified"
+          },
+          {
+            "path": "infra/dlq.tf",
+            "change": "added"
+          }
         ],
         "diagrams": {
           "before": "diagrams/comp-cmp-queue-before.svg",
@@ -193,7 +416,10 @@
           "D1"
         ],
         "files": [
-          "jobs/weekly_export.py"
+          {
+            "path": "jobs/weekly_export.py",
+            "change": "removed"
+          }
         ],
         "diagrams": {
           "before": "diagrams/comp-cmp-cron-before.svg",
@@ -218,10 +444,22 @@
           "D2"
         ],
         "files": [
-          "aggregator/main.py",
-          "aggregator/report.py",
-          "aggregator/handlers.py",
-          "aggregator/tests/test_handlers.py"
+          {
+            "path": "aggregator/main.py",
+            "change": "added"
+          },
+          {
+            "path": "aggregator/report.py",
+            "change": "added"
+          },
+          {
+            "path": "aggregator/handlers.py",
+            "change": "added"
+          },
+          {
+            "path": "aggregator/tests/test_handlers.py",
+            "change": "added"
+          }
         ],
         "diagrams": {
           "before": "diagrams/comp-cmp-agg-before.svg",

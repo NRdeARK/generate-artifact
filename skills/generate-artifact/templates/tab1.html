@@ -5,28 +5,23 @@
 <section class="card">
   <div class="lbl">{{ui:t1.outcomes}}</div>
   {{outcomes}}
-  <div class="lbl">{{ui:t1.affected_heading}}</div>
-  {{affected}}
+  {{tree}}
+  <table class="uc-table"><tr><th>{{ui:col.id}}</th><th>{{ui:col.tier}}</th><th>{{ui:col.summary}}</th><th>{{ui:col.traced}}</th><th>{{ui:col.details}}</th></tr>{{uc_rows}}</table>
 </section>
-<div class="grid2">
-  <section class="card">
+<section class="card">
     <div class="lbl">{{ui:t1.impact}}</div>
     <table><tr><th>{{ui:col.component}}</th><th>{{ui:col.change}}</th><th>{{ui:col.affected_uc}}</th></tr>{{impact_rows}}</table>
-  </section>
-  <section class="card">
+</section>
+<section class="card">
     <div class="lbl">{{ui:t1.crud}}</div>
     <table><tr><th>{{ui:col.entity}}</th><th>{{ui:crud.create}}</th><th>{{ui:crud.read}}</th><th>{{ui:crud.update}}</th><th>{{ui:crud.delete}}</th></tr>{{crud_rows}}</table>
-  </section>
-</div>
+</section>
 {{overview}}
 <!--part:outcome-->
-<div class="outcome"><div class="box">{{text}}</div><span>→</span><div>{{ucs}}</div></div>
+<div class="banner"><span class="lbl">{{id}}</span><p>{{text}}</p></div>
 <!--/part-->
-<!--part:uc_line-->
-<div class="uc-line {{tier_class}}"><span class="pill">{{tier_label}}</span><strong>{{id}}</strong> {{title}} {{because}}</div>
-<!--/part-->
-<!--part:because-->
-<em>{{ui:t1.because}} {{component}}</em>
+<!--part:uc_row-->
+<tr><td>{{ref}}</td><td><span class="pill {{tier_class}}">{{tier}}</span></td><td>{{summary}}</td><td>{{traced}}</td><td>{{details}}</td></tr>
 <!--/part-->
 <!--part:impact_row-->
 <tr><td>{{component}} <span class="muted">({{level}})</span></td><td>{{change}}</td><td>{{ucs}}</td></tr>

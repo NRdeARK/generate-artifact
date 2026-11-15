@@ -119,8 +119,8 @@ class RenderTests(FixtureCase):
                 self.assertIn("data-set-lang=\"th\"", text)
                 self.assertIn("ga-lang", text)
                 self.assertIn("--accent: #D97757", text)
-                for label in ("0 Intent", "1 Use cases", "2 Decisions", "3 Concepts", "4 UC details", "5 Components"):
-                    self.assertIn(label, text)
+                for number, label in enumerate(("Intent", "Use cases", "Decisions", "Concepts", "UC details", "Components")):
+                    self.assertRegex(text, rf'<span class="tab-num">{number}</span><span class="tab-label"><span data-l="en">{label}</span>')
                 self.assertIn("updated", text)
                 self.assertIn('data-l="th"', text)
 
@@ -136,8 +136,8 @@ class RenderTests(FixtureCase):
             if name == "tab5.html":
                 continue  # the page itself is shown as current, not disabled
             with self.subTest(page=name):
-                self.assertRegex(text, r'class="nav-disabled" aria-disabled="true" title="Not created yet[^"]*"')
-                self.assertEqual(text.count("nav-disabled\""), 1)
+                self.assertRegex(text, r'class="tab disabled" aria-disabled="true" tabindex="0" title="Not created yet[^"]*"')
+                self.assertEqual(text.count('class="tab disabled"'), 1)
 
     def test_tab4_alts_have_working_toggles_and_start_hidden(self):
         text = self.build()["tab4.html"]
@@ -227,7 +227,7 @@ class ReviewRegressionTests(FixtureCase):
         self.edit("artifacts.json", lambda d: d["tabs"]["tab2"].update(url="javascript:alert(1)"))
         text = self.render_text("intent")
         self.assertNotIn("javascript:", text)
-        self.assertRegex(text, r'class="nav-disabled"[^>]*>(?:<span[^>]*>)?2 Decisions')
+        self.assertRegex(text, r'class="tab disabled"[^>]*>(?:<span[^>]*>)*2<')
         code, codes, _ = self.codes()
         self.assertEqual(code, 1)
         self.assertIn("bad-url", codes)
@@ -380,7 +380,7 @@ class SecondReviewRegressionTests(FixtureCase):
 class DiagramTests(unittest.TestCase):
     def test_fixture_diagrams_are_real_self_contained_svgs(self):
         svgs = sorted((FIXTURE / "diagrams").glob("*.svg"))
-        self.assertEqual(len(svgs), 16)
+        self.assertEqual(len(svgs), 23)
         for path in svgs:
             text = path.read_text(encoding="utf-8")
             with self.subTest(svg=path.name):
@@ -392,7 +392,7 @@ class DiagramTests(unittest.TestCase):
                 self.assertRegex(text, r"<title id=[^>]+>[^<]+</title>")
 
     def test_sequence_diagrams_label_every_arrow(self):
-        for path in (FIXTURE / "diagrams").glob("uc-*.svg"):
+        for path in [*(FIXTURE / "diagrams").glob("uc-0*.svg"), *(FIXTURE / "diagrams").glob("arch-*.svg")]:
             text = path.read_text(encoding="utf-8")
             arrows = len(re.findall(r'marker-end="url\(#[^)]*arrow', text))
             labels = len(re.findall(r'letter-spacing="0.06em"', text))
@@ -404,6 +404,134 @@ class DiagramTests(unittest.TestCase):
         self.assertIn("diagram-design:diagram-design", text)
         self.assertIn("docs/artifact/diagrams/<name>.svg", text)
         self.assertIn("Never hand-draw placeholder", text)
+
+
+class ArchViewTests(FixtureCase):
+    """Before/after data-flow diagrams per C4 level (Tab 5 and the Tab 1 overview)."""
+
+    def page(self, tab):
+        run("render", str(self.dir), "--tabs", tab)
+        return (self.dir / "build" / f"{tab}.html").read_text(encoding="utf-8")
+
+    def test_each_level_with_components_gets_a_diagram_pair_and_a_switch(self):
+        for tab in ("tab5", "tab1"):
+            text = self.page(tab)
+            with self.subTest(tab=tab):
+                self.assertEqual(re.findall(r'class="ba-cols" data-level="(L\d)"', text), ["L1", "L2", "L3"])
+                for level in ("L1", "L2", "L3"):
+                    self.assertIn(f'data-level-btn="{level}"', text)
+                self.assertRegex(text, r'class="ba-cols" data-level="L1" hidden')
+                self.assertNotRegex(text, r'class="ba-cols" data-level="L2" hidden')
+                self.assertEqual(text.count("data:image/svg+xml;base64,"), 6 + (tab == "tab1"))
+                self.assertIn("1 new", text)  # change summary line kept
+
+    def test_tab5_keeps_component_badges(self):
+        self.assertIn('class="badge new"', self.page("tab5"))
+
+    def test_missing_view_file_is_a_placeholder_and_a_warning(self):
+        (self.dir / "diagrams" / "arch-L2-after.svg").unlink()
+        self.assertIn("diagrams/arch-L2-after.svg", self.page("tab5"))
+        self.assertIn("diagram-missing", self.codes()[1])
+
+    def test_level_with_components_but_no_view_is_a_warning(self):
+        self.edit("registry.json", lambda d: d["views"].pop("L3"))
+        code, codes, _ = self.codes()
+        self.assertIn("view-missing", codes)
+        self.assertEqual(code, 0)
+
+    def test_level_without_components_needs_no_view(self):
+        def change(d):
+            d["components"] = [c for c in d["components"] if c["c4_level"] != "L3"]
+            d["views"].pop("L3")
+        self.edit("registry.json", change)
+        self.assertNotIn("view-missing", self.codes()[1])
+
+    def test_view_paths_follow_the_diagram_path_rules(self):
+        self.edit("registry.json", lambda d: d["views"]["L2"].update(before="diagrams/arch.png"))
+        self.assertIn("bad-diagram-path", self.codes()[1])
+
+    def test_print_shows_every_level(self):
+        project = sync.load_project(self.dir)
+        document = sync.Site(project, print_mode=True).print_document(["tab5"])
+        self.assertEqual(len(re.findall(r'class="ba-cols" data-level="L\d"\s*>', document)), 3)
+
+
+class Tab1LayoutTests(FixtureCase):
+    def test_id_references_never_wrap_and_crud_table_has_its_own_row(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.ref[^{]*\{[^}]*white-space:\s*nowrap")
+        template = (SKILL / "templates" / "tab1.html").read_text(encoding="utf-8")
+        crud_at, impact_at = template.index("t1.crud"), template.index("t1.impact")
+        between = template[impact_at:crud_at]
+        self.assertIn("</section>", between)  # impact and CRUD are separate full-width cards
+        self.assertNotIn('class="grid2"', template[impact_at - 40:crud_at + 40])
+
+
+class Tab1OutcomeTests(FixtureCase):
+    def page(self):
+        run("render", str(self.dir), "--tabs", "tab1")
+        return (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+
+    def test_outcome_banner_tree_diagram_and_uc_table(self):
+        text = self.page()
+        self.assertRegex(text, r'<div class="banner">')
+        self.assertEqual(text.count("data:image/svg+xml;base64,"), 7)  # 6 architecture views + the use case tree
+        self.assertNotIn("impact sweep)", text)  # the separate affected-UC list is gone
+        table = text.split('<table class="uc-table">')[1].split("</table>")[0]
+        for header in ("ID", "Tier", "Plain-words summary", "Traced from", "Details"):
+            self.assertIn(header, table)
+        self.assertEqual(table.count("<tr>") - 1, 3)  # one row per UC
+        self.assertIn("Outcome", table)
+        self.assertIn("via", table)
+        row = next(r for r in table.split("<tr>") if ">UC-03<" in r)
+        self.assertIn("Projects DB", row)
+        self.assertIn("PLACEHOLDER-tab4#UC-03", table)
+
+    def test_main_and_affected_rows_are_styled_differently(self):
+        table = self.page().split('<table class="uc-table">')[1]
+        self.assertIn('class="pill main"', table)
+        self.assertIn('class="pill affected"', table)
+
+    def test_missing_tree_diagram_is_a_placeholder_and_a_warning(self):
+        (self.dir / "diagrams" / "uc-tree.svg").unlink()
+        self.assertIn("diagrams/uc-tree.svg", self.page())
+        self.assertIn("diagram-missing", self.codes()[1])
+
+
+class TabBarTests(FixtureCase):
+    def page(self, tab="tab2"):
+        run("render", str(self.dir), "--tabs", tab)
+        return (self.dir / "build" / f"{tab}.html").read_text(encoding="utf-8")
+
+    def test_numbered_tabs_current_marked_and_grouped(self):
+        text = self.page("tab2")
+        nav = text.split('<nav class="nav"')[1].split("</nav>")[0]
+        self.assertEqual(re.findall(r'<span class="tab-num">(\d)</span>', nav), list("012345"))
+        self.assertEqual(nav.count('aria-current="page"'), 1)
+        self.assertRegex(nav, r'class="tab current" aria-current="page"><span class="tab-num">2</span>')
+        self.assertIn('class="nav-divider"', nav)
+        intent_group, solution_group = nav.split('class="nav-divider"')
+        self.assertIn('<span class="tab-num">0</span>', intent_group)
+        self.assertNotIn('<span class="tab-num">0</span>', solution_group)
+        self.assertEqual(len(re.findall(r'class="tab-num"', solution_group)), 5)
+
+    def test_disabled_tab_has_lock_and_tooltip_not_strikethrough(self):
+        self.edit("artifacts.json", lambda d: d["tabs"].pop("tab5"))
+        text = self.page("tab2")
+        disabled = re.search(r'<span class="tab disabled".*?</svg></span>', text, re.S).group(0)
+        self.assertIn("tab-lock", disabled)
+        self.assertIn('title="Not created yet', disabled)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertNotRegex(css, r"\.tab[^{]*\{[^}]*line-through")
+
+    def test_header_is_sticky_and_tab_states_use_theme_tokens(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.top \{[^}]*position: sticky")
+        for token in ("--tab-bg", "--tab-hover-bg", "--tab-active-bg", "--tab-active-fg", "--tab-disabled-fg", "--focus-ring"):
+            self.assertIn(token, css)
+            self.assertIn(token + ":", (SKILL / "themes" / "anthropic.css").read_text(encoding="utf-8"))
+        self.assertIn("a.tab:hover", css)
+        self.assertIn(".tab:focus-visible", css)
 
 
 class TemplateHygieneTests(unittest.TestCase):

@@ -322,6 +322,12 @@ def check_registry(project):
                                        f"component change has no {field}. Add change.{field} or a non-blank text reason in change.waive.{field}."))
             out += _unknown("registry.json", cid, change.get("ucs"), known["uc"], "UC")
             out += _unknown("registry.json", cid, change.get("decisions"), known["decision"], "decision")
+    views = project.registry.get("views") if isinstance(project.registry.get("views"), dict) else {}
+    for level in levels_with_components(project):
+        entry = views.get(level)
+        if not (isinstance(entry, dict) and entry.get("before") and entry.get("after")):
+            out.append(Finding("warning", "view-missing", f"registry.json views.{level}",
+                               f"level {level} has components but no before/after data-flow diagram. Add views.{level}.before and .after (diagrams/arch-{level}-before.svg)."))
     return out
 
 
@@ -441,9 +447,29 @@ def check_artifacts(project):
             if isinstance(entry, dict) and entry.get("url") and not safe_url(entry["url"])]
 
 
+def levels_with_components(project):
+    return [lv for lv in C4_LEVELS if any(c.get("c4_level") == lv for c in project.components)]
+
+
+def uc_tree_path(project):
+    return project.usecases.get("tree_diagram") or "diagrams/uc-tree.svg"
+
+
+def view_paths(registry, level):
+    """(before, after) diagram paths for a C4 level: from registry 'views', else the default names."""
+    entry = (registry.get("views") or {}).get(level)
+    entry = entry if isinstance(entry, dict) else {}
+    return (entry.get("before") or f"diagrams/arch-{level}-before.svg",
+            entry.get("after") or f"diagrams/arch-{level}-after.svg")
+
+
 def diagram_refs(project):
     """[(where, relative_path)] for every diagram the pages embed."""
     refs = [("intent", INTENT_DIAGRAM)] if project.intent else []
+    if project.ucs:
+        refs.append(("use case tree", uc_tree_path(project)))
+    for level in levels_with_components(project):
+        refs += zip((f"{level} view before", f"{level} view after"), view_paths(project.registry, level))
     if project.decisions.get("tree_diagram"):
         refs.append(("decisions tree", project.decisions["tree_diagram"]))
     for dec in project.decision_list:
@@ -639,16 +665,17 @@ class Site:
         return self.ui_en[f"nav.{tab}"]
 
     def nav(self, current):
-        items = []
-        for tab in TABS:
-            label = self.ui(f"nav.{tab}")
+        """(intent_html, solution_html): numbered tabs, current / linked / disabled, grouped Intent vs Solution."""
+        def item(tab):
+            number, label_en = self.ui_en[f"nav.{tab}"].split(" ", 1)
+            label_th = self.ui_th.get(f"nav.{tab}", self.ui_en[f"nav.{tab}"]).split(" ", 1)[1]
+            slots = dict(num=esc(number), label=self.bi(label_en, label_th))
             if tab == current:
-                items.append(self.part("nav_current", label=label))
-            elif self.tab_url(tab):
-                items.append(self.part("nav_link", href=esc(self.tab_url(tab), quote=True), label=label))
-            else:
-                items.append(self.part("nav_disabled", tooltip=esc(self.ui_plain("nav.disabled"), quote=True), label=label))
-        return "".join(items)
+                return self.part("nav_current", **slots)
+            if self.tab_url(tab):
+                return self.part("nav_link", href=esc(self.tab_url(tab), quote=True), **slots)
+            return self.part("nav_disabled", tooltip=esc(self.ui_plain("nav.disabled"), quote=True), **slots)
+        return item("intent"), "".join(item(tab) for tab in TABS[1:])
 
     def ref(self, ident):
         tab = next((t for pattern, t in REF_TAB if re.fullmatch(pattern, ident)), None)
@@ -686,19 +713,17 @@ class Site:
         return esc(" · ".join(info)) if info else self.ui("footer.uncommitted")
 
     def before_after(self, heading_key):
+        """One before/after data-flow diagram pair per C4 level that has components; the L1/L2/L3 buttons swap the pair."""
         comps = self.p.components
-        counts = {s: sum(1 for c in comps if c.get("status") == s) for s in CHANGE_STATUSES}
-
-        def boxes(items, after):
-            return "".join(self.part(
-                "comp_box", status=esc(c.get("status", "unchanged")) if after else "unchanged", level=esc(c.get("c4_level", "")),
-                id=esc(c.get("id", "")), name=esc(c.get("name", "")), hidden="" if self.print_mode or c.get("c4_level") == "L2" else "hidden",
-                status_label=self.ui(f"status.{c['status']}") if after and c.get("status") not in (None, "unchanged") else "")
-                for c in items)
-
-        buttons = "".join(self.part("level_button", level=lv, pressed=str(lv == "L2").lower(), label=self.ui(f"level.{lv}")) for lv in C4_LEVELS)
-        return self.part("before_after", heading=self.ui(heading_key), level_buttons=buttons,
-                         before=boxes([c for c in comps if c.get("status") != "new"], False), after=boxes(comps, True),
+        counts = {st: sum(1 for c in comps if c.get("status") == st) for st in CHANGE_STATUSES}
+        levels = levels_with_components(self.p)
+        default = "L2" if "L2" in levels else (levels[0] if levels else "")
+        views = "".join(self.part(
+            "ba_view", level=level, hidden="" if self.print_mode or level == default else "hidden",
+            before=self.diagram(view_paths(self.p.registry, level)[0], f"{level} before"),
+            after=self.diagram(view_paths(self.p.registry, level)[1], f"{level} after")) for level in levels)
+        buttons = "".join(self.part("level_button", level=level, pressed=str(level == default).lower(), label=self.ui(f"level.{level}")) for level in levels)
+        return self.part("before_after", heading=self.ui(heading_key), level_buttons=buttons, views=views,
                          summary=self.ui_fmt("ba.summary", **counts))
 
     def open_attr(self):
@@ -714,23 +739,32 @@ class Site:
         recap = self.tx("intent", "before", True, lambda s: md_lite(split_bullets(s)[0]))
         issues = self.tx("intent", "before", True, lambda s: md_lite(split_bullets(s)[1]))
         affected = [u for u in self.p.ucs if u.get("tier") == "Affected"]
-
-        def uc_line(uc, because=""):
-            return self.part("uc_line", tier_class=esc(uc.get("tier", "").lower()), tier_label=self.ui(f"tier.{uc.get('tier', 'Main')}"),
-                             id=esc(uc.get("id", "")), title=self.tx(uc.get("id"), "title"), because=because)
-
-        outcomes = "".join(self.part("outcome", text=self.tx(o.get("id"), "text"), ucs="".join(
-            uc_line(self.ucs[i]) for i in o.get("ucs", []) if i in self.ucs)) for o in self.p.usecases.get("outcomes", []))
-        affected_html = "".join(uc_line(u, self.part("because", component=self.comp_name(u.get("caused_by")))) for u in affected)
+        outcomes = "".join(self.part("outcome", id=esc(o.get("id", "")), text=self.tx(o.get("id"), "text"))
+                           for o in self.p.usecases["outcomes"])
+        rows = "".join(self._uc_row(u) for tier in TIERS for u in self.p.ucs if u.get("tier") == tier)
         impact = "".join(self.part(
             "impact_row", component=self.comp_name(c.get("id")), level=esc(c.get("c4_level", "")), change=self.tx(c.get("id"), "what"),
             ucs=self.refs([u["id"] for u in affected if u.get("caused_by") == c.get("id")]) or self.ui("t1.none"))
             for c in self.p.components if c.get("status") in ("changed", "new", "removed"))
         crud = "".join(self.part("crud_row", entity=esc(r.get("entity", "")), cells="".join(self._crud_cell(r.get(op)) for op in CRUD_OPS))
-                       for r in self.p.usecases.get("crud", []))
-        slots = dict(recap=recap, issues=issues, outcomes=outcomes, affected=affected_html,
-                     impact_rows=impact, crud_rows=crud, overview=self.before_after("t1.overview"))
+                       for r in self.p.usecases["crud"])
+        slots = dict(recap=recap, issues=issues, outcomes=outcomes, tree=self.diagram(uc_tree_path(self.p), "outcome to use cases"),
+                     uc_rows=rows, impact_rows=impact, crud_rows=crud, overview=self.before_after("t1.overview"))
         return slots, ""
+
+    def _uc_row(self, uc):
+        uid, tier = uc.get("id"), uc.get("tier", "Main")
+        if tier == "Affected":
+            traced = f'{self.ui("t1.via")} {self.comp_name(uc.get("caused_by"))}'
+        else:
+            ids = [o.get("id") for o in self.p.usecases["outcomes"] if uid in (o.get("ucs") or []) and isinstance(o.get("id"), str)]
+            traced = f'{self.ui("t1.outcome_ref")} {esc(", ".join(ids))}' if ids else "-"
+        url = self.tab_url("tab4")
+        label = self.ui("t1.open")
+        details = (self.part("ref_link", href=esc(f"{url}#{uid}", quote=True), label=label) if url and isinstance(uid, str)
+                   else self.part("ref_plain", label=label))
+        return self.part("uc_row", ref=self.ref(uid) if isinstance(uid, str) else "", tier_class=esc(tier.lower()), tier=self.ui(f"tier.{tier}"),
+                         summary=self.tx(uid, "summary"), traced=traced, details=details)
 
     def _crud_cell(self, value):
         value = (value or "").strip()
@@ -841,10 +875,11 @@ class Site:
     def page(self, tab):
         title, header_extra, content = self.content(tab)
         label = self.ui("page.intent" if tab == "intent" else "page.solution")
+        nav_intent, nav_solution = self.nav(tab)
         return self.fill(
             self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),
-            body_class="", project=esc(self.p.name), page_label=label, header_extra=header_extra, nav=self.nav(tab),
+            body_class="", project=esc(self.p.name), page_label=label, header_extra=header_extra, nav_intent=nav_intent, nav_solution=nav_solution,
             content=content, updated=self.updated())
 
     def print_document(self, tabs):

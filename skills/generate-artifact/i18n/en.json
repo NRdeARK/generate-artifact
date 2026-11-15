@@ -48,8 +48,6 @@
   "t1.recap": "Recap from intent · before state",
   "t1.issues": "Issues on this problem",
   "t1.outcomes": "Outcome success → use cases",
-  "t1.affected_heading": "Affected use cases (impact sweep)",
-  "t1.because": "because",
   "t1.impact": "Impact sweep · changed component → affected UCs",
   "t1.crud": "CRUD lifecycle check",
   "t1.overview": "Before / after overview (registry components)",
@@ -113,5 +111,13 @@
   "t5.links": "Linked:",
   "t5.data": "Data change · migration",
   "t5.infra": "Infra change",
-  "t5.files": "Files changed"
+  "t5.files": "Files changed",
+  "col.id": "ID",
+  "col.tier": "Tier",
+  "col.summary": "Plain-words summary",
+  "col.traced": "Traced from",
+  "col.details": "Details",
+  "t1.via": "via",
+  "t1.outcome_ref": "Outcome",
+  "t1.open": "Open in Tab 4"
 }

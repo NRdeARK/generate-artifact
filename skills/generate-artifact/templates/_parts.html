@@ -1,11 +1,11 @@
 <!--part:nav_link-->
-<a href="{{href}}">{{label}}</a>
+<a class="tab" href="{{href}}"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span></a>
 <!--/part-->
 <!--part:nav_current-->
-<strong class="nav-current" aria-current="page">{{label}}</strong>
+<span class="tab current" aria-current="page"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span></span>
 <!--/part-->
 <!--part:nav_disabled-->
-<span class="nav-disabled" aria-disabled="true" title="{{tooltip}}">{{label}}</span>
+<span class="tab disabled" aria-disabled="true" tabindex="0" title="{{tooltip}}"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span><svg class="tab-lock" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><rect x="2" y="5" width="8" height="6" rx="1" fill="currentColor"/><path d="M4 5V3.5a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span>
 <!--/part-->
 
 <!--part:diagram-->
@@ -42,18 +42,18 @@
 <p class="muted">{{ui:changelog.empty}}</p>
 <!--/part-->
 
-<!--part:comp_box-->
-<div class="box {{status}}" data-level="{{level}}" title="{{id}}" {{hidden}}>{{name}}<small>{{status_label}}</small></div>
-<!--/part-->
 <!--part:before_after-->
 <section class="card ba">
   <div class="row-between"><span class="lbl">{{heading}}</span><div class="level-btns" role="group">{{level_buttons}}</div></div>
-  <div class="ba-cols">
-    <div><strong>{{ui:ba.before}}</strong><div class="ba-grid">{{before}}</div></div>
-    <div><strong>{{ui:ba.after}}</strong><div class="ba-grid">{{after}}</div></div>
-  </div>
+  {{views}}
   <p class="muted">{{summary}}</p>
 </section>
+<!--/part-->
+<!--part:ba_view-->
+<div class="ba-cols" data-level="{{level}}" {{hidden}}>
+  <div><strong>{{ui:ba.before}}</strong>{{before}}</div>
+  <div><strong>{{ui:ba.after}}</strong>{{after}}</div>
+</div>
 <!--/part-->
 <!--part:level_button-->
 <button type="button" data-level-btn="{{level}}" aria-pressed="{{pressed}}">{{label}}</button>

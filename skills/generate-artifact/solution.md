@@ -24,7 +24,7 @@ One large, living document that runs from design to finish. Input: the **approve
 
 ## Tab 1 — Use cases & coverage
 1. **Recap from intent**: before state and the issues/problems (pulled from the intent artifact, not re-written).
-2. **Outcome success → use cases**: break each outcome into Main UCs.
+2. **Outcome success → use cases**: a full-width outcome banner, then a tree diagram (`diagrams/uc-tree.svg`: Outcome → Main UCs → Affected UCs, each Affected edge labelled with the causing component), then one compact table (ID, Tier, plain-words summary, traced from, link to Tab 4). The table replaces any separate list of Affected UCs.
 3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it.
 4. **CRUD lifecycle check**: a matrix of **entity/component × Create / Read / Update / Delete**. Each cell maps to a UC or is explicitly marked "not needed (why)". Gaps get flagged so no lifecycle is half-built.
 5. Before/after overview diagram using registry components.
@@ -61,7 +61,7 @@ Per UC (Main first, then Affected):
 - **Change track** (collapsed by default): what changed in this UC per version.
 
 ## Tab 5 — Components
-1. **All components, before and after**: a side-by-side architecture view built from the registry, with change badges.
+1. **All components, before and after, with data flow**: a side-by-side **architecture / data-flow diagram** (made with diagram-design), not just a grid of boxes. Every arrow between components is labelled with what flows (request, event, rows, email…). New or changed flows use the same change colors as components (new / changed / removed). There's one before/after pair per C4 level shown (the L1/L2/L3 switch swaps the diagram pair). The same applies to the Tab 1 before/after overview. Data: `registry.json` `views` (`{L1: {before, after}, ...}`, files `diagrams/arch-<level>-before.svg` / `-after.svg`); a level with components but no view is a validation warning.
 2. **Per-component change**:
    - What changes and why (linked to UCs and decisions).
    - Data changes: schema migrations, new tables/columns, indexes.
@@ -138,7 +138,7 @@ Per UC (Main first, then Affected):
 - **One artifact per tab**, linked. The intent page is the hub, with links to all 5 tabs and back-links from each.
 - **Single source of truth**: a local project folder holds the data (registry, use cases, decisions, changelog, intent). There's one HTML template per tab. A sync script validates cross-tab consistency (IDs exist, levels match; full traceability check below), renders only the changed tabs, and publishes them.
 - Not every project needs all 5 tabs every time, but all 5 are the standard for development work.
-- **Tabs not created yet are shown disabled, not hidden.** The nav always lists Intent plus all 5 tabs in the same order. A missing tab is greyed out and not clickable, with a tooltip like "Not created yet". The nav therefore looks the same on every page and every project.
+- **Tabs not created yet are shown disabled, not hidden.** The header is a sticky tab bar: numbered tabs 0–5 (Intent grouped apart from the Solution tabs), the current tab filled with the accent and `aria-current`, hover/focus states, and a horizontally scrolling row on phones. A missing tab is greyed with a lock and a tooltip "Not created yet", not clickable and not struck through. The nav therefore looks the same on every page and every project.
 
 ## Resolved design points (v0.1 build)
 - Data format: JSON for anything the script reads, Markdown for the intent. Location: `docs/artifact/`.

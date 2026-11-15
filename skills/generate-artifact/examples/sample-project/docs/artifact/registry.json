@@ -1,6 +1,13 @@
 {
   "components": [
-    {"id": "CMP-SLACK", "name": "Slack", "c4_level": "L1", "status": "unchanged"},
+    {"id": "CMP-SYS", "name": "Status Board", "kind": "system", "c4_level": "L1", "status": "changed",
+     "change": {
+       "what": "The system now takes status updates as events, shows them on one page and keeps the weekly email.",
+       "why": "Together these changes give everyone fresh status while managers still get their weekly summary.",
+       "ucs": ["UC-01", "UC-02", "UC-03"], "decisions": ["D1"],
+       "waive": {"files": "System-level view; the file changes are listed on its containers."}
+     }},
+    {"id": "CMP-EMAIL", "name": "Email service", "c4_level": "L1", "status": "unchanged"},
     {"id": "CMP-WEB", "name": "Web app", "c4_level": "L2", "status": "changed",
      "change": {
        "what": "New status page that lists every project and shows how fresh each status is.",
@@ -44,5 +51,10 @@
        "ucs": ["UC-02", "UC-03"], "decisions": ["D1", "D2"],
        "files": ["aggregator/main.py", "aggregator/report.py", "aggregator/handlers.py", "aggregator/tests/test_handlers.py"]
      }}
-  ]
+  ],
+  "views": {
+    "L1": {"before": "diagrams/arch-L1-before.svg", "after": "diagrams/arch-L1-after.svg"},
+    "L2": {"before": "diagrams/arch-L2-before.svg", "after": "diagrams/arch-L2-after.svg"},
+    "L3": {"before": "diagrams/arch-L3-before.svg", "after": "diagrams/arch-L3-after.svg"}
+  }
 }

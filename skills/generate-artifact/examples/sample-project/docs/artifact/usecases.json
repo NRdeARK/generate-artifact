@@ -1,4 +1,5 @@
 {
+  "tree_diagram": "diagrams/uc-tree.svg",
   "outcomes": [
     {"id": "O1", "text": "Anyone opens one page and sees every project's latest status within 10 seconds of a change.", "ucs": ["UC-01", "UC-02"]}
   ],

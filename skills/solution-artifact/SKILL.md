@@ -1,9 +1,9 @@
 ---
-name: generate-artifact
+name: solution-artifact
 description: Turn project work into private claude.ai artifact pages. Two kinds. (1) INTENT artifact - what / why / before state / constraints / outcome success. (2) SOLUTION artifact - 5 tabs (use cases & coverage, decisions, concepts, UC details, components) with C4 component registry, traceability check and EN/TH toggle. Use when the user says "generate artifact", "make the intent page", "solution artifact", "publish this", "make a page", "share link", or hands over a finished deliverable (report, plan, spec, PRD, memo, dashboard) meant for others to read.
 ---
 
-# generate-artifact (router)
+# solution-artifact (router)
 
 Pages start **private to the user**. Sharing happens only in the claude.ai UI; these tools can't share, unshare or make a page public.
 

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SKILL = REPO / "skills" / "generate-artifact"
+SKILL = REPO / "skills" / "solution-artifact"
 FIXTURE = SKILL / "examples" / "sample-project" / "docs" / "artifact"
 sys.path.insert(0, str(SKILL / "scripts"))
 

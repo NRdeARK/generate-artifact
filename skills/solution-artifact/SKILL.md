@@ -1,6 +1,6 @@
 ---
 name: solution-artifact
-description: Turn project work into private claude.ai artifact pages. Two kinds. (1) INTENT artifact - what / why / before state / constraints / outcome success. (2) SOLUTION artifact - 5 tabs (use cases & coverage, decisions, concepts, UC details, components) with C4 component registry, traceability check and EN/TH toggle. Use when the user says "generate artifact", "make the intent page", "solution artifact", "publish this", "make a page", "share link", or hands over a finished deliverable (report, plan, spec, PRD, memo, dashboard) meant for others to read.
+description: Turn project work into private claude.ai artifact pages. Two kinds. (1) INTENT artifact - what / why / before state / constraints / outcome success. (2) SOLUTION artifact - 5 tabs (use cases & coverage, decisions, concepts, UC details, components) with C4 component registry, traceability check and EN/TH toggle. Use only when the user asks for an intent artifact or a solution artifact by name (e.g. "intent artifact", "make the intent page", "solution artifact", "solution design artifact", "use cases / decisions / components tabs"), or invokes /solution-artifact. Do not use for generic "make an artifact / page / publish this / share link" requests.
 ---
 
 # solution-artifact (router)

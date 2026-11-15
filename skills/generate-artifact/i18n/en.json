@@ -70,7 +70,6 @@
   "t2.readonly": "Read-only. Decide in chat or by commenting on this page (any answer, not only these options). Claude updates the data and republishes.",
   "t2.linked": "Linked UCs:",
   "t2.choice": "Choice",
-  "t2.counts": "{open} open · {decided} decided",
   "opt.pros": "Pros",
   "opt.cons": "Cons",
   "opt.cost": "Cost",

@@ -1362,7 +1362,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
 
     def test_phone_layout_on_all_six_pages(self):
-        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2 + 4)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
         for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
             self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
 
@@ -1377,7 +1377,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assert_group("touch.", 11)
 
     def test_viewer_layout_toggle_on_desktop(self):
-        self.assert_group("desktop.", 5)
+        self.assert_group("desktop.", 5 + 6)
 
     def test_thai_glyphs_render_and_nothing_overflows(self):
         self.assert_group("thai.", 2 + 12)
@@ -1581,6 +1581,33 @@ class StickyLabelColumnTests(FixtureCase):
         narrow = self.css().split("@media (max-width: 640px)")[-1]
         self.assertRegex(narrow, r"table\.flip td \{[^}]*position: relative; z-index: 1;")
         self.assertNotRegex(narrow, r"table\.flip th\[scope=\"row\"\][^}]*background: transparent")
+
+class HeaderTests(FixtureCase):
+    def test_tab2_header_has_no_status_or_count_badge(self):
+        run("render", str(self.dir), "--tabs", "tab2")
+        text = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        header = text.split('<header class="top">')[1].split("</header>")[0]
+        self.assertEqual(header.count('class="pill"'), 1)  # only the "Solution" label
+        self.assertNotRegex(en_plain(header), r"\d+ (open|decided)")
+        en = json.loads((SKILL / "i18n" / "en.json").read_text(encoding="utf-8"))
+        th = json.loads((SKILL / "i18n" / "th.json").read_text(encoding="utf-8"))
+        self.assertNotIn("t2.counts", en)
+        self.assertNotIn("t2.counts", th)
+
+    def test_css_hides_the_bar_with_a_transform_and_respects_focus_and_reduced_motion(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.top \{[^}]*transition: transform")
+        self.assertRegex(css, r"\.top\.is-hidden \{ transform: translateY\(-100%\); \}")
+        self.assertIn(".top:focus-within { transform: none; }", css)
+        reduced = css.split("@media (prefers-reduced-motion: reduce)")[1].split("}")[0]
+        self.assertIn(".top", reduced)
+        self.assertRegex(css, r"\.side \{[^}]*top: calc\(var\(--header-h, 0px\) \+ 12px\)")
+
+    def test_script_hides_on_scroll_down_shows_on_scroll_up_with_pins(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        for needle in ("is-hidden", "passive: true", "requestAnimationFrame", "pinUntil", "delta > 8", "delta < -8", "--header-h"):
+            self.assertIn(needle, js)
+        self.assertRegex(js, r"viewerOpen\(\)[^;]*header\.contains\(document\.activeElement\)")
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

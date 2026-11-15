@@ -353,6 +353,36 @@
     if (lv) showLevel(lv.closest(".ba"), lv.dataset.levelBtn);
   });
 
+  /* ---- top bar: hides while scrolling down, shows on scrolling up, near the top, with focus inside it, with the viewer open
+         or while the side index is being used. --header-h follows the visible state so sticky offsets stay right. ---- */
+  function initAutoHideHeader() {
+    var header = document.querySelector(".top");
+    if (!header) return;
+    var lastY = window.scrollY, hidden = false, ticking = false, pinUntil = 0;
+    function setHidden(next) {
+      if (next === hidden) return;
+      hidden = next;
+      header.classList.toggle("is-hidden", next);
+      doc.style.setProperty("--header-h", next ? "0px" : header.offsetHeight + "px");
+    }
+    function update() {
+      ticking = false;
+      var y = window.scrollY, delta = y - lastY;
+      if (viewerOpen() || header.contains(document.activeElement) || Date.now() < pinUntil || y <= header.offsetHeight) { setHidden(false); lastY = y; return; }
+      if (delta > 8) { setHidden(true); lastY = y; }
+      else if (delta < -8) { setHidden(false); lastY = y; }
+    }
+    window.addEventListener("scroll", function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(update);
+    }, { passive: true });
+    header.addEventListener("focusin", function () { setHidden(false); });
+    function pinForSideIndex(e) { if (e.target.closest && e.target.closest(".side")) pinUntil = Date.now() + 1500; }
+    document.addEventListener("click", pinForSideIndex);
+    document.addEventListener("focusin", pinForSideIndex);
+  }
+
   /* ---- side index scrollspy (Tab 3 concepts, Tab 4 use cases) and sticky offsets ---- */
   function initSideIndex() {
     var header = document.querySelector(".top");
@@ -409,6 +439,7 @@
   }, true);
 
   function init() {
+    initAutoHideHeader();
     var savedView = null;
     try { savedView = localStorage.getItem(TABLE_VIEW_KEY); } catch (err) { /* default */ }
     setTableView(savedView === "cards" ? "cards" : "flip", false);

@@ -1036,8 +1036,7 @@ class Site:
         decided = [d for d in decisions if d.get("status") == "decided"]
         slots = dict(tree=self.diagram(self.p.decisions.get("tree_diagram"), "solution path tree"),
                      open="".join(self._decision(d) for d in is_open), decided="".join(self._decision(d) for d in decided))
-        header = f'<span class="pill">{self.ui_fmt("t2.counts", open=len(is_open), decided=len(decided))}</span>'
-        return slots, header
+        return slots, ""
 
     def _decision(self, dec):
         did, decided = dec.get("id"), dec.get("status") == "decided"

@@ -196,6 +196,9 @@ const tap = (x, y) => gesture(() => tapOnce(x, y));
 const drag = (x, y, dx, dy, steps) => gesture(() => dragOnce(x, y, dx, dy, steps));
 const pinch = (cx, cy, from, to, steps) => gesture(() => pinchOnce(cx, cy, from, to, steps));
 const near = (a, b, tol = 1.5) => Math.abs(a - b) <= tol;
+const headerTop = () => ev(`document.querySelector(".top").getBoundingClientRect().top`);
+const scrollPage = async (y) => { await ev(`window.scrollTo(0, ${y})`); await sleep(550); };
+
 
 async function main() {
   // ============================================================ (1) phone layout, all six pages
@@ -319,6 +322,27 @@ async function main() {
   await ev(OPEN_DETAILS);
   await screenshot("flip-phone-tab5-dictionary", ".dictionary");
 
+
+  // ---- top bar hides while scrolling down and returns on scrolling up (real touch scrolling)
+  await goto("tab4");
+  const phoneTop0 = await headerTop();
+  await drag(CW / 2, 700, 0, -380, 14);
+  await sleep(600);
+  const phoneHidden = await headerTop();
+  record("phone.header_shown_at_top", near(phoneTop0, 0, 0.5), `top=${phoneTop0}`);
+  record("phone.header_hides_on_touch_scroll_down", phoneHidden < -20, `top after scrolling down=${phoneHidden}, --header-h=${await ev("getComputedStyle(document.documentElement).getPropertyValue('--header-h').trim()")}`);
+  await drag(CW / 2, 300, 0, 160, 10);
+  await sleep(600);
+  const phoneShown = await headerTop();
+  record("phone.header_shows_on_touch_scroll_up", near(phoneShown, 0, 0.5), `top after scrolling up=${phoneShown}`);
+  await drag(CW / 2, 700, 0, -380, 14);
+  await sleep(600);
+  await ev(`document.querySelector(".nav a").focus()`);
+  await sleep(450);
+  const phoneFocus = await headerTop();
+  record("phone.header_shows_with_keyboard_focus", near(phoneFocus, 0, 0.5), `top with focus inside the bar=${phoneFocus}`);
+  await ev("document.activeElement.blur()");
+
   await goto("tab1");
   const crud = await ev(`(() => { const t = document.querySelector(".crud-table"); const w = t.closest(".table-wrap"); const td = t.querySelector("tr:nth-child(2) td:first-child");
     return { sticky: getComputedStyle(td).position, left: getComputedStyle(td).left, scrolls: w.scrollWidth > w.clientWidth, overflow: getComputedStyle(w).overflowX, stacked: getComputedStyle(td).display === "block" }; })()`);
@@ -427,6 +451,39 @@ async function main() {
   const hiddenOnDesktop = await ev(`(() => ({ flip: getComputedStyle(document.querySelector(".tbl-flip")).display, toggle: getComputedStyle(document.querySelector(".view-toggle")).display }))()`);
   record("desktop.flip_and_toggle_hidden_on_wide_screens", hiddenOnDesktop.flip === "none" && hiddenOnDesktop.toggle === "none", JSON.stringify(hiddenOnDesktop));
   record("desktop.tables_stay_tables_on_wide_screens", wide.cells > 0 && wide.tableCell && wide.cardsHidden && JSON.stringify(wide.columns) === JSON.stringify(["Use case", "Tier", "Description", "Traced from"]), JSON.stringify(wide));
+
+
+  // ---- top bar hides while scrolling down and returns on scrolling up (desktop)
+  await goto("tab4");
+  await ev("document.documentElement.style.scrollBehavior = 'auto'");
+  const dTop0 = await headerTop();
+  const dShownSide = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  await scrollPage(900);
+  const dHidden = await headerTop();
+  const dSideHidden = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  const dVar = await ev("getComputedStyle(document.documentElement).getPropertyValue('--header-h').trim()");
+  await scrollPage(780);
+  const dShown = await headerTop();
+  const dBarHeight = await ev(`document.querySelector(".top").offsetHeight`);
+  const dSideShown = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  record("desktop.header_shown_at_top", near(dTop0, 0, 0.5), `top=${dTop0}`);
+  record("desktop.header_hides_on_scroll_down", dHidden < -20 && dVar === "0px", `top after scrolling down=${dHidden}, --header-h=${dVar}`);
+  record("desktop.header_shows_on_scroll_up", near(dShown, 0, 0.5), `top after scrolling up=${dShown}`);
+  record("desktop.side_index_offset_follows_the_bar", near(dSideHidden, 12, 2) && dSideShown >= dBarHeight + 10, `side top: bar hidden ${dSideHidden}, bar shown ${dSideShown} (bar height ${dBarHeight}), at top ${dShownSide}`);
+  await scrollPage(900);
+  await ev(`document.querySelector(".nav a").focus()`);
+  await sleep(450);
+  const dFocus = await headerTop();
+  record("desktop.header_shows_with_keyboard_focus", near(dFocus, 0, 0.5), `top with focus inside the bar=${dFocus}`);
+  await ev("document.activeElement.blur()");
+  await scrollPage(0);
+  await scrollPage(900);
+  await scrollPage(30);
+  record("desktop.header_shown_near_the_top", near(await headerTop(), 0, 0.5), `top at scrollY 30=${await headerTop()}`);
+  await scrollPage(0);
+  await ev(`document.querySelector('.side a[href="#UC-03"]').click()`);
+  await sleep(700);
+  record("desktop.header_stays_shown_when_the_side_index_is_used", near(await headerTop(), 0, 0.5), `top after jumping via the side index=${await headerTop()} scrollY=${await ev("scrollY")}`);
 
   // ============================================================ (3) Thai
   const GLYPHS = `(() => {

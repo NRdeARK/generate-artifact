@@ -14,7 +14,7 @@ ul { margin: 6px 0; padding-left: 20px; }
 /* language: both languages are embedded, CSS shows one */
 html[lang="th"] [data-l="en"], html[lang="en"] [data-l="th"] { display: none; }
 
-.top { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px; padding: 10px 32px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.top { position: sticky; top: 0; z-index: 10; transition: transform 0.2s ease; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px; padding: 10px 32px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .brand { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .project { font-family: var(--font-display); font-size: 20px; }
 .nav { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 4px 2px; }
@@ -277,3 +277,9 @@ a.uc-link .ref-id { color: var(--link); text-decoration: underline; }
 
 body.print .tbl-flip, body.print .item-cards, body.print .view-toggle { display: none !important; }
 body.print .tbl-normal { display: block !important; }
+
+/* the top bar slides away while scrolling down and returns on any upward scroll, focus inside it, or near the top */
+.top.is-hidden { transform: translateY(-100%); }
+.top:focus-within { transform: none; }
+.side { transition: top 0.2s ease; }
+@media (prefers-reduced-motion: reduce) { .top, .side { transition: none; } }

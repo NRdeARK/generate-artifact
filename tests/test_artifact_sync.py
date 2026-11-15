@@ -377,6 +377,35 @@ class SecondReviewRegressionTests(FixtureCase):
         self.assertIn(run("i18n-diff", str(self.dir))[0], (0, 1))
 
 
+class DiagramTests(unittest.TestCase):
+    def test_fixture_diagrams_are_real_self_contained_svgs(self):
+        svgs = sorted((FIXTURE / "diagrams").glob("*.svg"))
+        self.assertEqual(len(svgs), 16)
+        for path in svgs:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(svg=path.name):
+                self.assertNotIn("placeholder diagram", text)
+                self.assertNotIn("<script", text)
+                self.assertNotRegex(text, r"(?:href|src)=")
+                self.assertNotIn("http://", text.replace("http://www.w3.org/2000/svg", ""))
+                self.assertIn('role="img"', text)
+                self.assertRegex(text, r"<title id=[^>]+>[^<]+</title>")
+
+    def test_sequence_diagrams_label_every_arrow(self):
+        for path in (FIXTURE / "diagrams").glob("uc-*.svg"):
+            text = path.read_text(encoding="utf-8")
+            arrows = len(re.findall(r'marker-end="url\(#[^)]*arrow', text))
+            labels = len(re.findall(r'letter-spacing="0.06em"', text))
+            with self.subTest(svg=path.name):
+                self.assertGreaterEqual(labels, arrows)
+
+    def test_skill_requires_diagram_design_and_forbids_placeholders(self):
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("diagram-design:diagram-design", text)
+        self.assertIn("docs/artifact/diagrams/<name>.svg", text)
+        self.assertIn("Never hand-draw placeholder", text)
+
+
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):
         offenders = []

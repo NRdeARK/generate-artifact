@@ -10,7 +10,7 @@
        {"id": "good", "kind": "good", "title": "Status page loads", "diagram": "diagrams/uc-01-good.svg",
         "touchpoints": [{"step": "6", "sees": "Project cards with \"Updated 3s ago\""}]},
        {"id": "bad-timeout", "kind": "bad", "title": "API timeout", "diagram": "diagrams/uc-01-bad.svg",
-        "touchpoints": [{"step": "2b", "sees": "\"Couldn't load status. Retry\""}]},
+        "touchpoints": [{"step": "3", "sees": "\"Couldn't load status. Retry\""}]},
        {"id": "edge-empty", "kind": "edge", "title": "Zero projects", "diagram": "diagrams/uc-01-edge.svg",
         "touchpoints": [{"step": "6", "sees": "\"No projects yet. Create one\""}]}
      ],
@@ -20,7 +20,7 @@
      "components": ["CMP-WEB", "CMP-API", "CMP-QUEUE", "CMP-AGG", "CMP-DB"],
      "flows": [
        {"id": "good", "kind": "good", "title": "Update is published", "diagram": "diagrams/uc-02-good.svg",
-        "touchpoints": [{"step": "1", "sees": "\"Status saved\""}]},
+        "touchpoints": [{"step": "3", "sees": "\"Status saved\""}]},
        {"id": "bad-queue", "kind": "bad", "title": "Queue unavailable", "diagram": "diagrams/uc-02-bad.svg",
         "touchpoints": [{"step": "3b", "sees": "\"Saved, but others may see it late\""}]},
        {"id": "edge-duplicate", "kind": "edge", "title": "Same status sent twice", "diagram": "diagrams/uc-02-edge.svg",

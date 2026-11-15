@@ -33,7 +33,8 @@ Field shapes: copy `examples/sample-project/docs/artifact/`. English is the sour
 ## 4. Solution flow
 Build only the tabs the work needs (each is its own artifact). A tab whose data file is absent is skipped and shown **disabled, never hidden**, in every nav.
 - Tab 1 `usecases.json` (outcomes, UCs, crud) · Tab 2 `decisions.json` · Tab 3 `concepts.json` · Tab 4 `usecases.json` (flows, touchpoints) · Tab 5 `registry.json` (per-component `change`).
-- Component IDs come from the registry, C4 levels L1-L3. Every diagram is made with `diagram-design:diagram-design` from registry names/levels and saved in `diagrams/` (English only).
+- Component IDs come from the registry, C4 levels L1-L3.
+- **Diagrams:** for every diagram, invoke the `diagram-design:diagram-design` skill (swimlane, sequence, tree, concept, wireframe) with the registry component names and levels, the theme colors (status colors for changed/new/removed), English labels and every arrow labelled. Export self-contained SVG (no scripts, no external refs) to `docs/artifact/diagrams/<name>.svg`, using the file names the data files reference. **Never hand-draw placeholder diagrams**; a missing file shows a visible placeholder box and validate warns. Reference output: `examples/sample-project/docs/artifact/diagrams/`.
 - Tab 4 sequence diagrams are written **from reading the actual code**; label each `source`: `code`, `draft` or `mixed`. Every arrow labelled.
 - Tab 2 is **read-only**: no choose buttons. Decisions happen in chat or artifact comments; update `decisions.json` (chosen/deferred/rejected + reason, deferred needs `revisit_when`), then republish.
 - Feedback arrives in chat or artifact comments. Update the data, republish, reply in the thread.

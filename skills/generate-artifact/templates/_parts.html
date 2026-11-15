@@ -72,16 +72,26 @@
 <!--part:tblset-->
 <div class="tblset">
   <div class="view-toggle" role="group" aria-label="{{label_view}}"><button type="button" data-table-view="flip" aria-pressed="true">{{ui:tbl.flip}}</button><button type="button" data-table-view="cards" aria-pressed="false">{{ui:tbl.cards}}</button></div>
-  <div class="tbl-normal"><div class="table-wrap"><table class="{{cls}}"><tr class="stack-head">{{head}}</tr>{{rows}}</table></div></div>
-  <div class="tbl-flip"><div class="table-wrap flip-scroll"><table class="flip">{{flip_rows}}</table></div><span class="swipe-hint" aria-hidden="true">{{ui:tbl.swipe}}</span></div>
+  <div class="tbl-normal"><div class="table-wrap"><table class="{{cls}}"><tr>{{head}}</tr>{{rows}}</table></div></div>
+  <div class="tbl-flip"><div class="table-wrap flip-scroll"><table class="flip"><tr><th class="flip-corner"></th>{{flip_head}}</tr>{{flip_rows}}</table></div><span class="swipe-hint" aria-hidden="true">{{ui:tbl.swipe}}</span></div>
+  <div class="item-cards">{{cards}}</div>
 </div>
 <!--/part-->
-<!--part:stack_cell-->
-<td{{attrs}}><span class="cell-label">{{label}}</span>{{content}}</td>
+<!--part:flip_title-->
+<th scope="col"><span class="item-title">{{title}}</span> {{meta}}</th>
 <!--/part-->
 <!--part:flip_row-->
 <tr><th scope="row">{{label}}</th>{{cells}}</tr>
 <!--/part-->
 <!--part:flip_cell-->
 <td>{{content}}</td>
+<!--/part-->
+<!--part:item_card-->
+<article class="item-card"><header class="item-head"><span class="item-title">{{title}}</span> {{meta}}<span class="item-badge">{{badge}}</span></header>{{body}}{{footer}}</article>
+<!--/part-->
+<!--part:uc_link-->
+<a class="uc-link" href="{{href}}"><span class="ref-id">{{id}}</span> · <strong>{{name}}</strong></a>
+<!--/part-->
+<!--part:uc_plain-->
+<span class="uc-link"><span class="ref-id">{{id}}</span> · <strong>{{name}}</strong></span>
 <!--/part-->

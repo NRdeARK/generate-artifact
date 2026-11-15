@@ -49,6 +49,14 @@ def contrast(a, b):
     la, lb = sorted((luminance(a), luminance(b)), reverse=True)
     return (la + 0.05) / (lb + 0.05)
 
+
+def en_plain(markup):
+    """Visible English text of a fragment: drops the Thai half of bilingual spans, tags and entities."""
+    import html as html_lib
+    markup = re.sub(r'<span data-l="th">.*?</span>', "", markup, flags=re.S)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html_lib.unescape(markup))).strip()
+
+
 class FixtureCase(unittest.TestCase):
     """Each test gets its own copy of the fixture so seeded errors never leak."""
 
@@ -503,18 +511,18 @@ class Tab1OutcomeTests(FixtureCase):
         self.assertRegex(text, r'<div class="banner">')
         self.assertEqual(text.count('<figure class="diagram">'), 5)  # four overview diagrams (L1, L2 pairs) + the use case tree
         self.assertNotIn("impact sweep)", text)  # the separate affected-UC list is gone
-        table = text.split('<table class="uc-table stack">')[1].split("</table>")[0]
-        for header in ("ID", "Tier", "Plain-words summary", "Traced from", "Details"):
+        table = text.split('<table class="uc-table">')[1].split("</table>")[0]
+        for header in ("Use case", "Tier", "Description", "Traced from"):
             self.assertIn(header, table)
-        self.assertEqual(table.count("<tr>"), 3)  # one data row per UC (the header row is <tr class="stack-head">)
+        self.assertEqual(table.count("<tr>"), 4)  # header row + one row per UC
         self.assertIn("Outcome", table)
-        self.assertIn("via", table)
-        row = next(r for r in table.split("<tr>") if ">UC-03<" in r)
+        self.assertNotIn("Plain-words", table)
+        row = next(r for r in table.split("<tr>") if "UC-03" in r)
         self.assertIn("Projects DB", row)
         self.assertIn("PLACEHOLDER-tab4#UC-03", table)
 
     def test_main_and_affected_rows_are_styled_differently(self):
-        table = self.page().split('<table class="uc-table stack">')[1]
+        table = self.page().split('<table class="uc-table">')[1]
         self.assertIn('class="pill main"', table)
         self.assertIn('class="pill affected"', table)
 
@@ -1354,7 +1362,7 @@ class BrowserCdpTests(unittest.TestCase):
         self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
 
     def test_phone_layout_on_all_six_pages(self):
-        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 3 + 1 + 3 + 2 + 3)  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 1 + 3 + 2 + 3 + 2)  # overflow x6, tab bar, side x2, pairs x2, tables x3, viewer bar, crud, flip default x3, flip swipe x2, toggle x3, name-first x2  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
         for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
             self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
 
@@ -1391,23 +1399,19 @@ class MobileTableTests(FixtureCase):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertRegex(css, r"\.table-wrap \{[^}]*overflow-x: auto")
 
-    def test_key_tables_turn_into_labelled_cards_on_narrow_screens(self):
+    def test_key_tables_have_a_compact_item_card_view_for_narrow_screens(self):
         pages = self.pages()
-        for page, marker in (("tab1", '<table class="uc-table stack">'), ("tab1", '<table class="stack">'), ("tab4", '<table class="stack">'), ("tab5", '<table class="dict-cols stack">')):
-            self.assertIn(marker, pages[page])
+        for page, count in (("tab1", 2), ("tab4", 3), ("tab5", 2)):
+            self.assertEqual(pages[page].count('<div class="item-cards">'), count, page)
         for page in ("tab1", "tab4", "tab5"):
-            for table in re.findall(r'<table class="[^"]*stack[^"]*">.*?</table>', pages[page], re.S):
-                rows = re.findall(r"<tr>.*?</tr>", table, re.S)
-                self.assertTrue(rows)
-                for row in rows:
-                    cells = re.findall(r"<td[^>]*>.*?</td>", row, re.S)
-                    self.assertTrue(cells and all('class="cell-label"' in c for c in cells), row[:120])
-                self.assertIn('<tr class="stack-head">', table)
+            for card in re.findall(r'<article class="item-card">.*?</article>', pages[page], re.S):
+                self.assertIn('<header class="item-head">', card)
+                self.assertIn('<span class="item-title">', card)
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         phone = css.split("@media (max-width: 640px)")[1].split("\n}\n")[0]
-        for needle in ("table.stack", ".stack-head", ".cell-label"):
+        for needle in (".tbl-normal { display: none; }", ".item-cards", 'html[data-table-view="cards"]'):
             self.assertIn(needle, phone)
-        self.assertRegex(css, r"\.cell-label \{ display: none; \}")  # hidden on wide screens
+        self.assertRegex(css, r"\.item-cards \{ display: none; \}")  # hidden on wide screens
 
     def test_crud_matrix_stays_a_scroll_box_with_a_sticky_first_column(self):
         text = self.pages()["tab1"]
@@ -1427,19 +1431,21 @@ class FlipTableTests(FixtureCase):
         run("render", str(self.dir))
         return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
 
-    def test_every_key_table_is_rendered_twice_from_the_same_rows(self):
+    def test_every_key_table_is_rendered_three_ways_from_the_same_rows(self):
         pages = self.pages()
-        uc = re.search(r'<table class="uc-table stack">.*?</table>', pages["tab1"], re.S).group(0)
+        uc = re.search(r'<table class="uc-table">.*?</table>', pages["tab1"], re.S).group(0)
         flip = re.search(r'<table class="flip">.*?</table>', pages["tab1"], re.S).group(0)
-        self.assertEqual(flip.count('<th scope="row">'), 5)  # one row per field
+        cards = re.search(r'<div class="item-cards">.*?</div>\s*</div>', pages["tab1"], re.S).group(0)
+        self.assertEqual(flip.count('<th scope="row">'), 3)  # Tier, Description, Traced from
+        self.assertEqual(flip.count('<th scope="col">'), 3)  # one column header per item
         for row in re.findall(r"<tr><th scope=\"row\">.*?</tr>", flip, re.S):
-            self.assertEqual(row.count("<td>"), 3)  # one column per item (UC)
-        for needle in ("UC-01", "UC-03", "A team member opens the status page", "via", "Open in Tab 4"):
-            self.assertIn(needle, re.sub(r"<[^>]+>", " ", flip))
-            self.assertIn(needle, re.sub(r"<[^>]+>", " ", uc))
+            self.assertEqual(row.count("<td>"), 3)
+        for needle in ("UC-01", "UC-03", "View project status", "A team member opens the status page", "Outcome O1", "Projects DB"):
+            for view in (uc, flip, cards):
+                self.assertIn(needle, en_plain(view))
         for page, expected in (("tab1", 2), ("tab4", 3), ("tab5", 2)):
             self.assertEqual(pages[page].count('<table class="flip">'), expected, page)
-            self.assertEqual(len(re.findall(r'<table class="[^"]*stack[^"]*">', pages[page])), expected, page)
+            self.assertEqual(pages[page].count('<div class="item-cards">'), expected, page)
 
     def test_toggle_markup_defaults_to_flipped(self):
         text = self.pages()["tab1"]
@@ -1459,8 +1465,8 @@ class FlipTableTests(FixtureCase):
         wide = css.split("@media (max-width: 640px)")[0]
         self.assertRegex(wide, r"\.tbl-flip \{ display: none; \}")
         self.assertRegex(wide, r"\.view-toggle \{ display: none; \}")
-        narrow = css.split("@media (max-width: 640px)")[-1]
-        for needle in ('html[data-table-view="cards"] .tbl-normal', ".tbl-flip", "scroll-snap-type: x mandatory", "scroll-snap-align: start", "position: sticky",
+        narrow = css.split("@media (max-width: 640px)")[1]
+        for needle in ('html[data-table-view="cards"] .item-cards', ".tbl-flip", "scroll-snap-type: x mandatory", "scroll-snap-align: start", "position: sticky",
                        ".swipe-hint", "linear-gradient(to right, transparent, var(--surface))"):
             self.assertIn(needle, css)
         self.assertRegex(narrow, r"\.tbl-normal \{ display: none; \}")
@@ -1471,6 +1477,110 @@ class FlipTableTests(FixtureCase):
         self.assertIn("ga-table-view", js)
         self.assertRegex(js, r"try \{[^}]*localStorage\.setItem\(TABLE_VIEW_KEY")
         self.assertIn("flip-scroll", js)
+
+class ItemNameFirstTests(FixtureCase):
+    def tab(self, name):
+        run("render", str(self.dir), "--tabs", name)
+        return (self.dir / "build" / f"{name}.html").read_text(encoding="utf-8")
+
+    def plain(self, markup):
+        return en_plain(markup)
+
+    def test_uc_table_desktop_columns_and_name_link(self):
+        text = self.tab("tab1")
+        table = re.search(r'<table class="uc-table">.*?</table>', text, re.S).group(0)
+        heads = re.findall(r"<th>(.*?)</th>", table, re.S)
+        self.assertEqual([self.plain(h) for h in heads[: 4]][0:1], ["Use case"])
+        self.assertEqual(len(heads), 4)  # Use case | Tier | Description | Traced from (no ID, no Details column)
+        self.assertRegex(table, r'<a class="uc-link" href="https://claude\.ai/artifact/PLACEHOLDER-tab4#UC-01"><span class="ref-id">UC-01</span> · <strong>')
+        self.assertIn("View project status", table)
+        self.assertNotIn("Plain-words summary", text)
+        self.assertNotIn("Open in Tab 4</a></td>", table)  # the name links to Tab 4; no Details column
+
+    def test_uc_card_has_header_badge_body_and_one_muted_footer_line(self):
+        text = self.tab("tab1")
+        cards = re.search(r'<div class="item-cards">.*?</div>\s*</div>', text, re.S).group(0)
+        card = re.findall(r'<article class="item-card">.*?</article>', cards, re.S)[0]
+        head = re.search(r'<header class="item-head">.*?</header>', card, re.S).group(0)
+        self.assertIn("UC-01", head)
+        self.assertIn("View project status", head)
+        self.assertIn("Main", head)  # the tier badge
+        body_text = self.plain(card)
+        for label in ("ID", "TIER", "Tier", "DETAILS", "Details"):
+            self.assertNotRegex(body_text, rf"(^| ){label}( |$)")
+        self.assertIn("A team member opens the status page", card)
+        foot = re.search(r'<footer class="item-foot">.*?</footer>', card, re.S).group(0)
+        self.assertEqual(self.plain(foot), "From: Outcome O1 · Open in Tab 4 →")
+        self.assertEqual(card.count("<footer"), 1)
+
+    def test_uc_flip_header_is_the_item_name_and_rows_are_tier_description_traced(self):
+        text = self.tab("tab1")
+        flip = re.search(r'<table class="flip">.*?</table>', text, re.S).group(0)
+        headers = [self.plain(h) for h in re.findall(r'<th scope="col">(.*?)</th>', flip, re.S)]
+        self.assertEqual(headers[0], "UC-01 · View project status")
+        self.assertEqual(headers[2], "UC-03 · Weekly report")
+        self.assertEqual([self.plain(h) for h in re.findall(r'<th scope="row">(.*?)</th>', flip, re.S)], ["Tier", "Description", "Traced from"])
+
+    def test_impact_card_is_component_name_with_level_badge(self):
+        text = self.tab("tab1")
+        impact = text.split('<div class="item-cards">')[2].split("</div>\n</div>")[0]
+        card = next(c for c in re.findall(r'<article class="item-card">.*?</article>', impact, re.S) if "Projects DB" in c)
+        head = re.search(r'<header class="item-head">.*?</header>', card, re.S).group(0)
+        self.assertEqual(self.plain(head), "Projects DB C4 L2")
+        self.assertRegex(head, r'<span class="badge unchanged">C4 L2</span>')
+        self.assertIn("UC-03", self.plain(re.search(r'<footer class="item-foot">.*?</footer>', card, re.S).group(0)))
+
+    def test_touchpoint_card_is_scenario_name_with_kind_badge_and_step_footer(self):
+        text = self.tab("tab4")
+        uc1 = text.split('<section class="uc" id="UC-01">')[1].split("</section>")[0]
+        cards = re.findall(r'<article class="item-card">.*?</article>', uc1, re.S)
+        self.assertEqual(len(cards), 5)
+        timeout = next(c for c in cards if "API timeout" in c)
+        head = re.search(r'<header class="item-head">.*?</header>', timeout, re.S).group(0)
+        self.assertIn("<strong>", head)
+        self.assertEqual(self.plain(head), "API timeout Bad")
+        self.assertIn("Couldn't load status. Retry", self.plain(timeout))
+        self.assertEqual(self.plain(re.search(r'<footer class="item-foot">.*?</footer>', timeout, re.S).group(0)), "Step 2c")
+
+    def test_dictionary_card_is_column_name_with_change_badge_and_type(self):
+        text = self.tab("tab5")
+        cards = re.findall(r'<article class="item-card">.*?</article>', text, re.S)
+        status = next(c for c in cards if "<code>status</code>" in c and "on_track" in c)
+        head = self.plain(re.search(r'<header class="item-head">.*?</header>', status, re.S).group(0))
+        self.assertIn("status", head)
+        self.assertIn("enum project_status", head)
+        self.assertIn("~", head)
+        self.assertIn("Where the project stands right now", status)
+        self.assertIn("on_track", status)
+        self.assertEqual(self.plain(re.search(r'<footer class="item-foot">.*?</footer>', status, re.S).group(0)), "Nullable: no · Default: on_track")
+
+    def test_description_label_in_both_languages_and_no_old_labels(self):
+        en = json.loads((SKILL / "i18n" / "en.json").read_text(encoding="utf-8"))
+        th = json.loads((SKILL / "i18n" / "th.json").read_text(encoding="utf-8"))
+        self.assertEqual((en["col.description"], th["col.description"]), ("Description", "คำอธิบาย"))
+        for gone in ("col.id", "col.summary", "col.details", "t1.via"):
+            self.assertNotIn(gone, en)
+        self.assertNotIn("Plain-words", json.dumps(en))
+        self.assertIn("คำอธิบาย", self.tab("tab1"))
+
+class StickyLabelColumnTests(FixtureCase):
+    def css(self):
+        return (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+
+    def test_flip_table_has_no_gap_around_the_sticky_label_column(self):
+        css = self.css()
+        narrow = css.split("@media (max-width: 640px)")[-1]
+        self.assertRegex(narrow, r"table\.flip \{[^}]*border-collapse: separate; border-spacing: 0;")
+        self.assertRegex(narrow, r"\.flip-scroll \{[^}]*padding: 0;")
+        self.assertRegex(narrow, r'table\.flip th\[scope="row"\], table\.flip th\.flip-corner \{[^}]*position: sticky; left: -2px; padding-left: 10px; z-index: 3;[^}]*background-color: var\(--surface-alt\)')
+        self.assertRegex(narrow, r"table\.flip th\[scope=\"row\"\]::before[^}]*left: -8px[^}]*background: inherit")
+        self.assertIn("var(--sticky-shadow)", narrow)  # a hard edge so scrolled content visibly slides under the label column
+        self.assertIn("--sticky-shadow:", (SKILL / "themes" / "anthropic.css").read_text(encoding="utf-8"))
+
+    def test_label_cells_are_opaque_and_above_the_item_cells(self):
+        narrow = self.css().split("@media (max-width: 640px)")[-1]
+        self.assertRegex(narrow, r"table\.flip td \{[^}]*position: relative; z-index: 1;")
+        self.assertNotRegex(narrow, r"table\.flip th\[scope=\"row\"\][^}]*background: transparent")
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

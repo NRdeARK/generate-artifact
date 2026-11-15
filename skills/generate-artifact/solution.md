@@ -50,7 +50,7 @@ One large, living document that runs from design to finish. Input: the **approve
 
 ## Tab 4 — Use case details
 Per UC (Main first, then Affected):
-- **Plain-words summary**: what this UC is about, in 1–2 simple sentences.
+- **Description**: what this UC is about, in 1–2 simple sentences.
 - **Sequence diagram** (ONE per UC, inline SVG, text at least 11px):
   - Written **from reading the actual code**, not from existing docs (docs go stale or skip steps).
   - **Every arrow is labelled.** No unlabelled hops through middle components.

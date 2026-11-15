@@ -223,22 +223,19 @@ body.print .expand, body.print .viewer { display: none; }
 .layout-seg button:first-child { border-radius: 6px 0 0 6px; }
 .layout-seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 
-/* tables: always in a scroll box; the key ones become labelled cards on narrow screens */
-.cell-label { display: none; }
+/* tables: always in a scroll box; the key ones also have a flipped view and compact item cards for narrow screens */
 .tbl-flip { display: none; }
+.item-cards { display: none; }
 .view-toggle { display: none; }
 .swipe-hint { display: none; }
 .crud-table th:first-child, .crud-table td:first-child { position: sticky; left: 0; background: var(--surface); }
 .crud-table th:first-child { background: var(--surface-alt); }
+.ref-id { white-space: nowrap; }
+.uc-link { text-decoration: none; color: var(--fg); }
+a.uc-link .ref-id { color: var(--link); text-decoration: underline; }
+.item-type { color: var(--fg-muted); }
 @media (max-width: 640px) {
-  .table-wrap > table.stack { min-width: 0; }
-  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: auto; }
-  table.stack tr.stack-head { display: none; }
-  table.stack tr { border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; padding: 4px 0; background: var(--surface); }
-  table.stack td { border: 0; padding: 4px 10px; }
-  table.stack .cell-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-muted); }
   .crud-table { min-width: 34rem; }
-
   /* flipped view (default on phones): fields down a sticky first column, one item per column, swipe sideways */
   .view-toggle { display: inline-flex; margin-bottom: 6px; }
   .view-toggle button { font: inherit; font-size: 12px; padding: 4px 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
@@ -247,14 +244,36 @@ body.print .expand, body.print .viewer { display: none; }
   .view-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
   .tbl-normal { display: none; }
   .tbl-flip { display: block; position: relative; }
-  html[data-table-view="cards"] .tbl-normal { display: block; }
+  html[data-table-view="cards"] .item-cards { display: block; }
   html[data-table-view="cards"] .tbl-flip { display: none; }
-  .flip-scroll { scroll-snap-type: x mandatory; scroll-padding-left: 5.5rem; }
+  .item-card { border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; padding: 10px 12px; background: var(--surface); }
+  .item-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+  .item-title { font-weight: 600; }
+  .item-badge { margin-left: auto; }
+  .item-body { margin: 6px 0 0; }
+  .item-line { margin: 6px 0 0; }
+  .item-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-muted); }
+  .item-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-muted); }
+  .flip-scroll { scroll-snap-type: x mandatory; scroll-padding-left: 6.25rem; }
   .table-wrap > table.flip { min-width: 0; width: max-content; }
-  table.flip th[scope="row"] { position: sticky; left: 0; z-index: 1; width: 5.5rem; min-width: 5.5rem; max-width: 5.5rem; background: var(--surface-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-  table.flip td { width: calc(100vw - 4rem - 5.5rem - 2.5rem); min-width: 9rem; scroll-snap-align: start; vertical-align: top; background: var(--surface); }
+  table.flip th[scope="col"] { min-width: 9rem; vertical-align: bottom; background: var(--surface-alt); font-size: 13px; }
+  table.flip th.flip-corner { position: sticky; left: 0; z-index: 2; width: 6.25rem; min-width: 6.25rem; background: var(--surface-alt); }
+  table.flip th[scope="row"] { position: sticky; left: 0; z-index: 1; width: 6.25rem; min-width: 6.25rem; max-width: 6.25rem; background: var(--surface-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.flip td { width: calc(100vw - 4rem - 6.25rem - 2.5rem); min-width: 9rem; scroll-snap-align: start; vertical-align: top; background: var(--surface); }
   .tbl-flip::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 2.5rem; background: linear-gradient(to right, transparent, var(--surface)); pointer-events: none; transition: opacity 0.2s; }
   .swipe-hint { display: block; position: absolute; right: 0.4rem; bottom: 0.3rem; z-index: 2; font-size: 11px; color: var(--fg-muted); background: var(--surface); padding: 2px 6px; border-radius: 4px; transition: opacity 0.2s; }
   .tbl-flip.scrolled .swipe-hint, .tbl-flip.at-end .swipe-hint, .tbl-flip.at-end::after { opacity: 0; }
 }
-body.print .tbl-flip, body.print .view-toggle { display: none !important; }
+/* flipped table: the sticky label column must fully cover whatever scrolls under it (no gaps, borders as shadows) */
+@media (max-width: 640px) {
+  table.flip { border-collapse: separate; border-spacing: 0; }
+  .flip-scroll { padding: 0; margin: 0; }
+  table.flip th, table.flip td { border: 0; border-bottom: 1px solid var(--border); }
+  table.flip td { position: relative; z-index: 1; border-right: 1px solid var(--border); }
+  table.flip th[scope="col"] { position: relative; z-index: 1; border-right: 1px solid var(--border); }
+  table.flip th[scope="row"], table.flip th.flip-corner { position: sticky; left: -2px; padding-left: 10px; z-index: 3; background-color: var(--surface-alt); background-clip: border-box; box-shadow: inset -2px 0 0 var(--unchanged-bd), 6px 0 8px -4px var(--sticky-shadow); }
+  table.flip th[scope="row"]::before, table.flip th.flip-corner::before { content: ""; position: absolute; top: 0; bottom: 0; left: -8px; width: 8px; background: inherit; }
+}
+
+body.print .tbl-flip, body.print .item-cards, body.print .view-toggle { display: none !important; }
+body.print .tbl-normal { display: block !important; }

@@ -15,6 +15,7 @@
   --accent-fg: #FFFFFF;
   --link: #B5522F;
   --shadow: 0 1px 2px rgba(20, 20, 19, 0.08);
+  --sticky-shadow: rgba(20, 20, 19, 0.28);
 
   /* tab bar */
   --tab-bg: #F0EEE6;

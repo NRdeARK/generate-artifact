@@ -21,7 +21,7 @@ const record = (name, ok, detail = "") => { results[name] = { ok: !!ok, detail: 
 
 // ---------------------------------------------------------------- browser + protocol
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-profile-"));
-const proc = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0",
+const proc = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--no-default-browser-check", "--remote-debugging-port=0",
   `--user-data-dir=${userDir}`, "about:blank"], { stdio: "ignore" });
 const watchdog = setTimeout(() => {
   console.error("cdp_check timed out");
@@ -81,16 +81,22 @@ const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1300, height: 1000 };
 let CW = 1300;
 let CURRENT = { kind: "desktop", size: null };  // emulated device width in CSS px (innerWidth is unreliable once content overflows on mobile)
+// Touch events are only acknowledged once the renderer has produced a frame after a resize or capture; asking for two animation frames forces that.
+const frames = async () => {
+  try { await send("Page.bringToFront", {}, 3000); } catch { /* not fatal */ }
+  try { await send("Runtime.evaluate", { expression: "new Promise((r) => { const t = setTimeout(() => r(false), 1500); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); r(true); })); })", awaitPromise: true, returnByValue: true }, 6000); } catch { /* frames may not tick: continue */ }
+};
+let touchOn = null;
 async function emulate(kind, size = PHONE) {
   CURRENT = { kind, size };
   CW = kind === "phone" ? size.width : DESKTOP.width;
-  if (kind === "phone") {
-    await send("Emulation.setDeviceMetricsOverride", { ...size, deviceScaleFactor: 3, mobile: true });
-    await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-  } else {
-    await send("Emulation.setDeviceMetricsOverride", { ...DESKTOP, deviceScaleFactor: 1, mobile: false });
-    await send("Emulation.setTouchEmulationEnabled", { enabled: false });
+  const phone = kind === "phone";
+  await send("Emulation.setDeviceMetricsOverride", phone ? { ...size, deviceScaleFactor: 3, mobile: true } : { ...DESKTOP, deviceScaleFactor: 1, mobile: false });
+  if (touchOn !== phone) {  // toggling touch emulation while touches are in flight stalls the input pipeline: only change it when the mode really changes
+    await send("Emulation.setTouchEmulationEnabled", phone ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+    touchOn = phone;
   }
+  await frames();
 }
 
 async function goto(page, { lang } = {}) {
@@ -99,6 +105,7 @@ async function goto(page, { lang } = {}) {
   await loaded;
   if (lang) await ev(`document.documentElement.lang = ${JSON.stringify(lang)}`);
   await ev("document.fonts.ready.then(() => true)");
+  await frames();
   await sleep(300);
 }
 
@@ -116,7 +123,8 @@ async function screenshot(name, selector = null) {
   fs.writeFileSync(file, Buffer.from(data, "base64"));
   shotPaths.push(path.resolve(file));
   await emulate(CURRENT.kind, CURRENT.size || PHONE);  // a beyond-viewport capture leaves the viewport resized: restore the emulation
-  await sleep(500);
+  await frames();
+  await sleep(300);
   return file;
 }
 
@@ -160,20 +168,33 @@ async function touch(type, points) {
     }
   }
 }
-async function tap(x, y) { await touch("touchStart", [{ x, y }]); await sleep(50); await touch("touchEnd", []); await sleep(250); }
-async function drag(x, y, dx, dy, steps = 8) {
+async function tapOnce(x, y) { await touch("touchStart", [{ x, y }]); await sleep(50); await touch("touchEnd", []); await sleep(250); }
+async function dragOnce(x, y, dx, dy, steps = 8) {
   await touch("touchStart", [{ x, y }]);
   for (let i = 1; i <= steps; i++) { await touch("touchMove", [{ x: x + (dx * i) / steps, y: y + (dy * i) / steps }]); await sleep(20); }
   await touch("touchEnd", []);
   await sleep(200);
 }
-async function pinch(cx, cy, from, to, steps = 8) {
+async function pinchOnce(cx, cy, from, to, steps = 8) {
   const pts = (d) => [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }];
   await touch("touchStart", pts(from));
   for (let i = 1; i <= steps; i++) { await touch("touchMove", pts(from + ((to - from) * i) / steps)); await sleep(20); }
   await touch("touchEnd", []);
   await sleep(200);
 }
+// a whole gesture is retried once from a clean state if the browser dropped or stalled part of it
+async function gesture(run) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); } catch (error) {
+      try { await send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] }, 3000); } catch { /* nothing to cancel */ }
+      await frames();
+      if (attempt === 1) throw error;
+    }
+  }
+}
+const tap = (x, y) => gesture(() => tapOnce(x, y));
+const drag = (x, y, dx, dy, steps) => gesture(() => dragOnce(x, y, dx, dy, steps));
+const pinch = (cx, cy, from, to, steps) => gesture(() => pinchOnce(cx, cy, from, to, steps));
 const near = (a, b, tol = 1.5) => Math.abs(a - b) <= tol;
 
 async function main() {
@@ -209,21 +230,17 @@ async function main() {
   }
   for (const page of ["tab1", "tab4", "tab5"]) {
     await goto(page);
-    const cards = await ev(`(() => { const cells = [...document.querySelectorAll("table.stack td")]; const heads = [...document.querySelectorAll("table.stack .stack-head")];
-      const label = document.querySelector("table.stack .cell-label");
-      return { cells: cells.length, block: cells.every((c) => getComputedStyle(c).display === "block"), headsHidden: heads.every((h) => getComputedStyle(h).display === "none"), labelShown: !!label && getComputedStyle(label).display !== "none" }; })()`);
-    record(`phone.key_tables_render_as_cards.${page}`, cards.cells > 0 && cards.block && cards.headsHidden && cards.labelShown, JSON.stringify(cards));
     const t = await ev(`(() => { const tables = [...document.querySelectorAll("table")]; const wraps = [...new Set(tables.map((t) => t.closest(".table-wrap")))].filter(Boolean);
-      return { tables: tables.length, wrapped: tables.every((t) => t.closest(".table-wrap")), auto: wraps.every((w) => getComputedStyle(w).overflowX === "auto"), scrolls: wraps.filter((w) => w.scrollWidth > w.clientWidth).length,
-      allStacked: tables.every((t) => t.classList.contains("stack")) }; })()`);
-    // every table lives in a scroll box; wide ones scroll inside it, the key ones are cards (nothing to scroll)
-    record(`phone.tables_scroll_in_their_box.${page}`, t.tables > 0 && t.wrapped && t.auto && (t.scrolls > 0 || t.allStacked), JSON.stringify(t));
+      return { tables: tables.length, wrapped: tables.every((t) => t.closest(".table-wrap")), auto: wraps.every((w) => getComputedStyle(w).overflowX === "auto"), scrolls: wraps.filter((w) => w.scrollWidth > w.clientWidth).length
+    }; })()`);
+    // every table lives in a scroll box, and the wide ones (flipped tables, CRUD) really scroll inside it
+    record(`phone.tables_scroll_in_their_box.${page}`, t.tables > 0 && t.wrapped && t.auto && t.scrolls > 0, JSON.stringify(t));
   }
 
   // ---- flipped tables: default on phones, swipe one item at a time, toggle to cards and back (remembered)
   const OPEN_DETAILS = `document.querySelectorAll("details").forEach((d) => { d.open = true; })`;
   const FLIP_STATE = `(() => { const set = document.querySelector(".tblset"); const vis = (e) => !!e.offsetParent;
-    return { flip: vis(set.querySelector(".tbl-flip")), normal: vis(set.querySelector(".tbl-normal")), toggle: vis(set.querySelector(".view-toggle")),
+    return { flip: vis(set.querySelector(".tbl-flip")), cards: vis(set.querySelector(".item-cards")), toggle: vis(set.querySelector(".view-toggle")),
       flipPressed: set.querySelector("[data-table-view=flip]").getAttribute("aria-pressed"), cardsPressed: set.querySelector("[data-table-view=cards]").getAttribute("aria-pressed"),
       saved: localStorage.getItem("ga-table-view"), view: document.documentElement.dataset.tableView }; })()`;
   await ev("localStorage.removeItem('ga-table-view')");
@@ -231,12 +248,16 @@ async function main() {
     await goto(page);
     await ev(OPEN_DETAILS);
     const f = await ev(FLIP_STATE);
-    record(`phone.flipped_is_default.${page}`, f.flip && !f.normal && f.toggle && f.flipPressed === "true" && f.cardsPressed === "false" && f.view === "flip", JSON.stringify(f));
+    record(`phone.flipped_is_default.${page}`, f.flip && !f.cards && f.toggle && f.flipPressed === "true" && f.cardsPressed === "false" && f.view === "flip", JSON.stringify(f));
   }
   await goto("tab1");
+  const flipHead = await ev(`[...document.querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=col]")].map((h) => h.innerText.replace(/\\s+/g, " ").trim())`);
+  const flipRows = await ev(`[...document.querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=row]")].map((h) => h.innerText.trim().toLowerCase())`);
+  record("phone.flip_header_is_item_name_and_rows_are_tier_description_traced", flipHead[0] === "UC-01 · View project status" && flipHead[2] === "UC-03 · Weekly report"
+    && JSON.stringify(flipRows) === JSON.stringify(["tier", "description", "traced from"]), JSON.stringify({ flipHead, flipRows }));
   await screenshot("flip-phone-tab1");
   const scroller = await rectOf(".flip-scroll");
-  const geometry = await ev(`(() => { const s = document.querySelector(".flip-scroll"); const td = s.querySelector("td"); const th = s.querySelector("th"); return { item: td.getBoundingClientRect().width, left: s.getBoundingClientRect().left, thLeft: th.getBoundingClientRect().left, label: th.getBoundingClientRect().width, view: s.clientWidth, cols: s.querySelectorAll("tr:first-child td").length, sw: s.scrollWidth, ox: getComputedStyle(s).overflowX, snap: getComputedStyle(s).scrollSnapType, prog: (s.scrollLeft = 150, s.scrollLeft) }; })()`);
+  const geometry = await ev(`(() => { const s = document.querySelector(".flip-scroll"); const td = s.querySelector("td"); const th = s.querySelector("th"); return { item: td.getBoundingClientRect().width, left: s.getBoundingClientRect().left, thLeft: th.getBoundingClientRect().left, label: th.getBoundingClientRect().width, view: s.clientWidth, cols: s.querySelectorAll("tr:nth-child(2) td").length, sw: s.scrollWidth, ox: getComputedStyle(s).overflowX, snap: getComputedStyle(s).scrollSnapType, prog: (s.scrollLeft = 150, s.scrollLeft) }; })()`);
   await ev(`document.querySelector(".flip-scroll").scrollLeft = 0`);
   const swipe = async (dx) => { await drag(scroller.x + 60, scroller.y, dx, 0, 12); await sleep(500); };
   const scrollLeft = () => ev(`document.querySelector(".flip-scroll").scrollLeft`);
@@ -247,21 +268,53 @@ async function main() {
   const stuck = await ev(`(() => { const s = document.querySelector(".flip-scroll"); return { th: s.querySelector("th").getBoundingClientRect().left - s.getBoundingClientRect().left, scrolled: s.parentElement.classList.contains("scrolled") }; })()`);
   record("phone.flip_swipe_scrolls_one_item_at_a_time", geometry.cols === 3 && near(first, geometry.item, 8) && near(second, geometry.sw - geometry.view, 3) && second > first + 50 && geometry.item < geometry.view + 1,
     `item width ${geometry.item.toFixed(1)}px, scrollLeft after swipe 1 = ${first.toFixed(1)} (one item), after swipe 2 = ${second.toFixed(1)} (end, max ${geometry.sw - geometry.view}), items ${geometry.cols}, visible ${geometry.view}`);
-  record("phone.flip_label_column_stays_sticky_and_hint_fades", near(stuck.th, 0, 1.5) && stuck.scrolled && near(geometry.thLeft - geometry.left, 0, 1.5), JSON.stringify({ ...stuck, geometry }));
+  record("phone.flip_label_column_stays_sticky_and_hint_fades", stuck.th <= 0.5 && stuck.th >= -2.5 && stuck.scrolled && near(geometry.thLeft - geometry.left, 0, 1.5), JSON.stringify({ ...stuck, geometry }));
   await screenshot("flip-phone-tab1-after-swipe", ".tblset");
+  // pixel check: nothing may show through left of / under the sticky label column
+  async function stripIsClean(selector) {
+    const g = await ev(`(() => { const box = document.querySelector(${JSON.stringify(selector)}); box.scrollIntoView({ block: "center" });
+      const b = box.getBoundingClientRect(); const th = box.querySelector("th[scope=row]"); const t = th.getBoundingClientRect();
+      const rows = [...box.querySelectorAll("th[scope=row]")].map((r) => { const q = r.getBoundingClientRect(); return [q.top - b.top + 6, q.bottom - b.top - 6]; });
+      const hits = rows.map(([ra, rb]) => document.elementsFromPoint(b.left + 0.4, b.top + (ra + rb) / 2).slice(0, 3).map((e) => e.tagName + "." + String(e.className).slice(0, 20) + (e.tagName === "TD" || e.tagName === "TH" ? "@" + Math.round(e.getBoundingClientRect().left - b.left) + "-" + Math.round(e.getBoundingClientRect().right - b.left) : "")));
+      return { hits, left: b.left, top: b.top + scrollY, height: b.height, thLeft: t.left, bg: getComputedStyle(th).backgroundColor, rows, pad: parseFloat(getComputedStyle(th).paddingLeft) }; })()`);
+    const width = Math.max(4, g.pad - 2);  // from the scroll box edge up to the label text
+    const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: g.left, y: g.top, width, height: g.height, scale: 1 } });  // the device scale factor (3) already applies
+    await emulate(CURRENT.kind, CURRENT.size || PHONE);
+    return await ev(`new Promise((resolve) => { const img = new Image(); img.onload = () => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+      const want = ${JSON.stringify(g.bg)}.match(/\\d+/g).map(Number); let bad = 0, total = 0, sample = null; const perRow = []; let ri = -1;
+      for (const [a, b] of ${JSON.stringify(g.rows)}) { ri++; perRow[ri] = 0; for (let y = Math.round(a * 3); y < Math.round(b * 3); y++) { const px = x.getImageData(0, y, img.width, 1).data;
+        for (let i = 0; i < px.length; i += 4) { total++; if (Math.abs(px[i] - want[0]) > 2 || Math.abs(px[i + 1] - want[1]) > 2 || Math.abs(px[i + 2] - want[2]) > 2) { bad++; perRow[ri]++; if (!sample) sample = { x: i / 4, y, rgb: [px[i], px[i + 1], px[i + 2]] }; } } } }
+      resolve({ bad, total, perRow, sample, hits: ${JSON.stringify(g.hits)}, stripCssWidth: ${width}, thLeftOffset: ${g.thLeft - g.left}, bg: ${JSON.stringify(g.bg)} }); }; img.src = "data:image/png;base64,${data}"; })`);
+  }
+  const clean1 = await stripIsClean(".flip-scroll");
+  record("phone.flip_label_strip_is_clean_after_swipe_tab1", clean1.total > 100 && clean1.bad === 0 && clean1.thLeftOffset <= 0.5, JSON.stringify(clean1));
+  await goto("tab4");
+  await screenshot("flip-phone-tab4-before-swipe", ".tblset");
+  const t4 = await rectOf(".flip-scroll");
+  await drag(t4.x + 60, t4.y, -150, 0, 12);
+  await sleep(500);
+  const clean4 = await stripIsClean(".flip-scroll");
+  record("phone.flip_label_strip_is_clean_after_swipe_tab4", clean4.total > 100 && clean4.bad === 0 && clean4.thLeftOffset <= 0.5, JSON.stringify(clean4));
+  await screenshot("flip-phone-tab4-after-swipe", ".tblset");
+  await goto("tab1");
   const cards = await rectOf("button[data-table-view=cards]");
   await tap(cards.x, cards.y);
   let t = await ev(FLIP_STATE);
-  record("phone.flip_toggle_to_cards", !t.flip && t.normal && t.cardsPressed === "true" && t.flipPressed === "false" && t.saved === "cards", JSON.stringify(t));
+  record("phone.flip_toggle_to_cards", !t.flip && t.cards && t.cardsPressed === "true" && t.flipPressed === "false" && t.saved === "cards", JSON.stringify(t));
+  const card = await ev(`(() => { const c = document.querySelector(".tblset .item-cards .item-card"); const head = c.querySelector(".item-head"); const foot = c.querySelector(".item-foot");
+    return { head: head.innerText.replace(/\\s+/g, " ").trim(), labels: [...c.querySelectorAll(".item-label")].length, foot: foot.innerText.replace(/\\s+/g, " ").trim(), cardText: c.innerText.toUpperCase(),
+      badgeRight: (() => { const b = c.querySelector(".item-badge").getBoundingClientRect(), h = head.getBoundingClientRect(); return h.right - b.right < 4; })() }; })()`);
+  record("phone.item_card_is_compact_name_badge_body_footer", card.head.startsWith("UC-01 · View project status") && card.head.includes("Main") && card.labels === 0 && /(^| )(ID|TIER|DETAILS)( |$)/.test(card.cardText) === false
+    && card.foot === "From: Outcome O1 · Open in Tab 4 →" && card.badgeRight, JSON.stringify(card));
   await screenshot("cards-phone-tab1");
   await goto("tab1");
   t = await ev(FLIP_STATE);
-  record("phone.cards_choice_is_remembered_after_reload", !t.flip && t.normal && t.cardsPressed === "true", JSON.stringify(t));
+  record("phone.cards_choice_is_remembered_after_reload", !t.flip && t.cards && t.cardsPressed === "true", JSON.stringify(t));
   const flipBtn = await rectOf("button[data-table-view=flip]");
   await tap(flipBtn.x, flipBtn.y);
   await goto("tab4");
   t = await ev(FLIP_STATE);
-  record("phone.flip_choice_is_global_and_back_to_flipped", t.flip && !t.normal && t.flipPressed === "true" && t.saved === "flip", JSON.stringify(t));
+  record("phone.flip_choice_is_global_and_back_to_flipped", t.flip && !t.cards && t.flipPressed === "true" && t.saved === "flip", JSON.stringify(t));
   await goto("tab5");
   await ev(OPEN_DETAILS);
   await screenshot("flip-phone-tab5-dictionary", ".dictionary");
@@ -368,11 +421,12 @@ async function main() {
   await ev(`document.querySelector("[data-viewer=close]").click(); localStorage.removeItem('ga-viewer-layout')`);
 
   await goto("tab1");
-  const wide = await ev(`(() => { const cells = [...document.querySelectorAll("table.stack td")]; const label = document.querySelector("table.stack .cell-label");
-    return { cells: cells.length, tableCell: cells.every((c) => getComputedStyle(c).display === "table-cell"), labelHidden: getComputedStyle(label).display === "none" }; })()`);
+  const wide = await ev(`(() => { const cells = [...document.querySelectorAll(".tbl-normal td")];
+    return { cells: cells.length, tableCell: cells.every((c) => getComputedStyle(c).display === "table-cell"), cardsHidden: getComputedStyle(document.querySelector(".item-cards")).display === "none",
+      columns: [...document.querySelectorAll(".tbl-normal .uc-table th")].map((h) => h.innerText.trim()) }; })()`);
   const hiddenOnDesktop = await ev(`(() => ({ flip: getComputedStyle(document.querySelector(".tbl-flip")).display, toggle: getComputedStyle(document.querySelector(".view-toggle")).display }))()`);
   record("desktop.flip_and_toggle_hidden_on_wide_screens", hiddenOnDesktop.flip === "none" && hiddenOnDesktop.toggle === "none", JSON.stringify(hiddenOnDesktop));
-  record("desktop.tables_stay_tables_on_wide_screens", wide.cells > 0 && wide.tableCell && wide.labelHidden, JSON.stringify(wide));
+  record("desktop.tables_stay_tables_on_wide_screens", wide.cells > 0 && wide.tableCell && wide.cardsHidden && JSON.stringify(wide.columns) === JSON.stringify(["Use case", "Tier", "Description", "Traced from"]), JSON.stringify(wide));
 
   // ============================================================ (3) Thai
   const GLYPHS = `(() => {

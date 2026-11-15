@@ -109,12 +109,8 @@
   "t5.data": "Data change · migration",
   "t5.infra": "Infra change",
   "t5.files": "Files changed",
-  "col.id": "ID",
   "col.tier": "Tier",
-  "col.summary": "Plain-words summary",
   "col.traced": "Traced from",
-  "col.details": "Details",
-  "t1.via": "via",
   "t1.outcome_ref": "Outcome",
   "t1.open": "Open in Tab 4",
   "diagram.expand": "Expand diagram",
@@ -165,5 +161,8 @@
   "tbl.flip": "Flip",
   "tbl.cards": "Cards",
   "tbl.swipe": "swipe →",
-  "tbl.view": "Table view"
+  "tbl.view": "Table view",
+  "col.usecase": "Use case",
+  "col.description": "Description",
+  "t1.from": "From:"
 }

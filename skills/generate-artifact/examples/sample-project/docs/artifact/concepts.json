@@ -1,14 +1,68 @@
 {
   "concepts": [
-    {"id": "C1", "label": "new pattern", "title": "Event-driven status",
-     "summary": "A status change is sent as a small event the moment it happens, instead of waiting for the weekly batch. It replaces the spreadsheet round trip.",
-     "terms": "status event, freshness window",
-     "diagram": "diagrams/concept-c1.svg", "decisions": ["D1", "D2"], "ucs": ["UC-02"], "components": ["CMP-QUEUE"]},
-    {"id": "C2", "label": "new component", "title": "Aggregator",
-     "summary": "A worker that reads status events and writes the latest status and the history. It does not serve pages; the API does.",
-     "diagram": "diagrams/concept-c2.svg", "decisions": ["D1"], "ucs": ["UC-02", "UC-03"], "components": ["CMP-AGG"]},
-    {"id": "C3", "label": "behavior change", "title": "Status history, no overwrite",
-     "summary": "Before, an update overwrote the old status. Now every update adds a row, so reports can show what changed and when.",
-     "diagram": "diagrams/concept-c3.svg", "ucs": ["UC-01", "UC-03"], "components": ["CMP-DB"]}
+    {
+      "id": "C1",
+      "label": "new pattern",
+      "title": "Event-driven status",
+      "summary": "A status change is sent as a small event the moment it happens, instead of waiting for the weekly batch. It replaces the spreadsheet round trip.",
+      "terms": "status event, freshness window",
+      "diagram": "diagrams/concept-c1.svg",
+      "decisions": [
+        "D1",
+        "D2"
+      ],
+      "ucs": [
+        "UC-02"
+      ],
+      "components": [
+        "CMP-QUEUE"
+      ],
+      "plain": "When a lead changes a status, everyone sees it within seconds instead of waiting for the weekly sheet.",
+      "before": "A lead pasted the status into a weekly sheet, so everyone saw it days later.",
+      "now": "The change is sent the moment it happens and shows on the status page in seconds.",
+      "why": "People stop asking where the project stands and trust what they see.",
+      "analogy": "A group chat notification instead of a weekly newsletter."
+    },
+    {
+      "id": "C2",
+      "label": "new component",
+      "title": "Aggregator",
+      "summary": "A worker that reads status events and writes the latest status and the history. It does not serve pages; the API does.",
+      "diagram": "diagrams/concept-c2.svg",
+      "decisions": [
+        "D1"
+      ],
+      "ucs": [
+        "UC-02",
+        "UC-03"
+      ],
+      "components": [
+        "CMP-AGG"
+      ],
+      "plain": "A behind-the-scenes helper that listens for status changes and keeps the page's data up to date.",
+      "before": "A weekly job copied the sheet into an email.",
+      "now": "One helper turns each change into stored status and history, and also writes the weekly report.",
+      "why": "One place does the bookkeeping, so the page and the report always agree.",
+      "analogy": "A librarian who files every new card the moment it arrives."
+    },
+    {
+      "id": "C3",
+      "label": "behavior change",
+      "title": "Status history, no overwrite",
+      "summary": "Before, an update overwrote the old status. Now every update adds a row, so reports can show what changed and when.",
+      "diagram": "diagrams/concept-c3.svg",
+      "ucs": [
+        "UC-01",
+        "UC-03"
+      ],
+      "components": [
+        "CMP-DB"
+      ],
+      "plain": "Instead of erasing the old status, we keep every change so we can see what changed and when.",
+      "before": "A new status replaced the old one, and the old one was lost.",
+      "now": "Every update adds a line to a history, and the latest line is the one shown.",
+      "why": "Reports can show what changed this week, and mistakes can be traced.",
+      "analogy": "A bank statement: new lines are added, old ones are never erased."
+    }
   ]
 }

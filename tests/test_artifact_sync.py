@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -502,10 +503,10 @@ class Tab1OutcomeTests(FixtureCase):
         self.assertRegex(text, r'<div class="banner">')
         self.assertEqual(text.count('<figure class="diagram">'), 5)  # four overview diagrams (L1, L2 pairs) + the use case tree
         self.assertNotIn("impact sweep)", text)  # the separate affected-UC list is gone
-        table = text.split('<table class="uc-table">')[1].split("</table>")[0]
+        table = text.split('<table class="uc-table stack">')[1].split("</table>")[0]
         for header in ("ID", "Tier", "Plain-words summary", "Traced from", "Details"):
             self.assertIn(header, table)
-        self.assertEqual(table.count("<tr>") - 1, 3)  # one row per UC
+        self.assertEqual(table.count("<tr>"), 3)  # one data row per UC (the header row is <tr class="stack-head">)
         self.assertIn("Outcome", table)
         self.assertIn("via", table)
         row = next(r for r in table.split("<tr>") if ">UC-03<" in r)
@@ -513,7 +514,7 @@ class Tab1OutcomeTests(FixtureCase):
         self.assertIn("PLACEHOLDER-tab4#UC-03", table)
 
     def test_main_and_affected_rows_are_styled_differently(self):
-        table = self.page().split('<table class="uc-table">')[1]
+        table = self.page().split('<table class="uc-table stack">')[1]
         self.assertIn('class="pill main"', table)
         self.assertIn('class="pill affected"', table)
 
@@ -637,10 +638,11 @@ class ConceptIndexTests(FixtureCase):
         self.assertNotIn('class="chips"', text)
         self.assertNotIn('class="chip"', text)
         side = text.split('<aside class="side"')[1].split("</aside>")[0]
-        for ident, title, kind in (("C1", "Event-driven status", "new pattern"), ("C2", "Aggregator", "new component"), ("C3", "Status history", "behavior change")):
+        for ident, title, plain in (("C1", "Event-driven status", "everyone sees it within seconds"), ("C2", "Aggregator", "behind-the-scenes helper"),
+                                    ("C3", "Status history", "we keep every change")):
             self.assertIn(f'href="#{ident}"', side)
             self.assertIn(title, side)
-            self.assertIn(kind, side)
+            self.assertIn(plain, side)
         self.assertEqual(re.findall(r'href="#(C\d)"', side), ["C1", "C2", "C3"])
 
     def test_concept_blocks_live_in_the_main_column(self):
@@ -953,25 +955,24 @@ class PairCompareTests(FixtureCase):
         document = sync.Site(project, print_mode=True).print_document(["tab5"])
         self.assertNotIn('class="expand-both"', document)
 
-    def test_expand_both_button_sits_under_the_pair_centered_across_both_columns(self):
+    def test_expand_both_button_sits_under_the_pair_aligned_right(self):
         text = self.tab5()
         for pair in re.findall(r'<div class="ba-cols"[^>]*>.*?</button>\s*</div>', text, re.S):
             self.assertGreater(pair.index('class="expand-both"'), pair.rindex('<div class="pair-side">'))
             self.assertEqual(pair.count('<div class="pair-side">'), 2)
         self.assertEqual(len(re.findall(r'class="expand-both"', text)), 9)
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
-        self.assertRegex(css, r"\.expand-both \{[^}]*grid-column: 1 / -1; justify-self: center;")
+        self.assertRegex(css, r"\.expand-both \{[^}]*grid-column: 1 / -1; justify-self: end;")
 
     def test_pairs_stack_below_1500px_and_viewer_stacks_in_portrait(self):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertIn("@media (max-width: 1500px) { .ba-cols { grid-template-columns: 1fr; } }", css)
-        self.assertIn("max-aspect-ratio: 1/1", css)
-        self.assertIn(".viewer-panes { flex-direction: column; }", css)
+        self.assertIn('.viewer-panes[data-layout="stack"] { flex-direction: column; }', css)
 
     def test_compare_labels_and_two_sync_toggles_are_in_every_page(self):
         text = self.tab5()
-        self.assertEqual(len(re.findall(r'data-viewer="sync-zoom" aria-pressed="true"', text)), 1)
-        self.assertEqual(len(re.findall(r'data-viewer="sync-pan" aria-pressed="true"', text)), 1)
+        self.assertEqual(len(re.findall(r'data-viewer="sync-zoom" aria-pressed="false"', text)), 1)  # off by default
+        self.assertEqual(len(re.findall(r'data-viewer="sync-pan" aria-pressed="false"', text)), 1)
         self.assertNotIn('data-viewer="sync"', text)
         for label in ("Expand both", "ขยายทั้งคู่", "Sync zoom", "ซิงก์ซูม", "Sync pan", "ซิงก์การเลื่อน"):
             self.assertIn(label, text)
@@ -985,6 +986,8 @@ var zbtn=document.querySelector('[data-viewer=sync-zoom]'), pbtn=document.queryS
 out.push('open='+(!v.hidden)); out.push('two='+(!panes[1].hidden));
 out.push('labels='+Array.prototype.map.call(v.querySelectorAll('.pane-label'),function(l){return l.textContent}).join('/'));
 out.push('defaults='+zbtn.getAttribute('aria-pressed')+'/'+pbtn.getAttribute('aria-pressed'));
+wheel0=function(){stages[0].dispatchEvent(new WheelEvent('wheel',{deltaY:-300,clientX:200,clientY:200,bubbles:true,cancelable:true}))};
+var i0=imgs[0].style.transform, i1=imgs[1].style.transform; wheel0(); out.push('independent_at_start='+(imgs[0].style.transform!==i0 && imgs[1].style.transform===i1));
 function parse(i){var m=/translate\(([-\d.e]+)px,\s*([-\d.e]+)px\)\s*scale\(([-\d.e]+)\)/.exec(imgs[i].style.transform);return {x:+m[1],y:+m[2],s:+m[3]}}
 function setBtn(b,on){if((b.getAttribute('aria-pressed')==='true')!==on)b.click()}
 function drag(i,dx,dy){stages[i].dispatchEvent(new PointerEvent('pointerdown',{pointerId:7,clientX:300,clientY:300,bubbles:true}));document.dispatchEvent(new PointerEvent('pointermove',{pointerId:7,clientX:300+dx,clientY:300+dy,bubbles:true}));document.dispatchEvent(new PointerEvent('pointerup',{pointerId:7,bubbles:true}))}
@@ -1007,10 +1010,120 @@ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))
 btn.click(); document.querySelector('[data-viewer=close]').click(); out.push('xclose='+v.hidden);
 var one=document.querySelector('.diagram .expand'); one.click(); out.push('single='+(!v.hidden)+'/'+panes[1].hidden+'/'+document.querySelector('[data-viewer=sync-zoom]').hidden); document.querySelector('[data-viewer=close]').click()"""
         result = run_probe(self.tab5(), probe, self.dir / "build" / "probe-compare.html", "1300,1000")
-        self.assertEqual(result, "open=true;two=true;labels=Before/After;defaults=true/true;"
+        self.assertEqual(result, "open=true;two=true;labels=Before/After;defaults=false/false;independent_at_start=true;"
                                  "z1p1=zoom:true,pan:true;z1p0=zoom:true,pan:true;z0p1=zoom:true,pan:true;z0p0=zoom:true,pan:true;"
                                  "fit=true;relinked=true/true;closed=true;focus=true;xclose=true;single=true/true/true")
 
+
+class CompareLayoutToggleTests(FixtureCase):
+    def tab5(self):
+        run("render", str(self.dir), "--tabs", "tab5")
+        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+
+    def test_segmented_layout_control_markup_and_labels(self):
+        text = self.tab5()
+        self.assertRegex(text, r'<span class="layout-seg" role="group" aria-label="Layout[^"]*" hidden>')
+        for name in ("layout-side", "layout-stack"):
+            self.assertRegex(text, rf'data-viewer="{name}" aria-pressed="(?:true|false)"')
+        for label in ("Side by side", "เคียงข้างกัน", "Top / bottom", "บน / ล่าง"):
+            self.assertIn(label, text)
+
+    def test_script_remembers_the_choice_in_try_catch_and_refits(self):
+        js = (SKILL / "templates" / "base.js").read_text(encoding="utf-8")
+        self.assertIn("ga-viewer-layout", js)
+        self.assertRegex(js, r"try \{[^}]*localStorage\.setItem\(LAYOUT_KEY")
+        self.assertIn("data-layout", (SKILL / "templates" / "base.css").read_text(encoding="utf-8"))
+        self.assertRegex(js, r"function applyLayout\(refit\)")
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
+    def test_in_browser_auto_choice_toggle_refit_and_memory(self):
+        probe = """var v=document.getElementById('viewer'), panes=v.querySelector('.viewer-panes');
+function open(){var b=document.querySelector('.ba-cols:not([hidden]) .expand-both'); b.click(); return b}
+function r(i){return v.querySelectorAll('.viewer-pane')[i].getBoundingClientRect()}
+function side(){return r(0).right<=r(1).left+1 && Math.abs(r(0).top-r(1).top)<2}
+function stack(){return r(1).top>=r(0).bottom-1 && Math.abs(r(0).left-r(1).left)<2}
+function btn(n){return document.querySelector('[data-viewer=layout-'+n+']')}
+function tf(i){return v.querySelectorAll('.viewer-img')[i].style.transform}
+var trigger=open();
+out.push('auto='+panes.dataset.layout+'/'+side()+'/'+btn('side').getAttribute('aria-pressed')+'/'+btn('stack').getAttribute('aria-pressed'));
+var before=tf(0); btn('stack').click();
+out.push('stack='+panes.dataset.layout+'/'+stack()+'/'+btn('stack').getAttribute('aria-pressed')+'/'+btn('side').getAttribute('aria-pressed'));
+out.push('refit='+(tf(0)!==before)); out.push('saved='+localStorage.getItem('ga-viewer-layout'));
+document.querySelector('[data-viewer=close]').click(); open();
+out.push('remembered='+panes.dataset.layout+'/'+stack());
+btn('side').click(); out.push('side='+panes.dataset.layout+'/'+side()+'/'+localStorage.getItem('ga-viewer-layout'));
+document.querySelector('[data-viewer=close]').click();
+localStorage.removeItem('ga-viewer-layout'); open(); out.push('cleared='+panes.dataset.layout);
+document.querySelector('[data-viewer=close]').click();
+var one=document.querySelector('.diagram .expand'); one.click(); out.push('single_hidden='+document.querySelector('.layout-seg').hidden); document.querySelector('[data-viewer=close]').click()"""
+        wide = run_probe(self.tab5(), probe, self.dir / "build" / "probe-layout.html", "1300,1000")
+        self.assertEqual(wide, "auto=side/true/true/false;stack=stack/true/true/false;refit=true;saved=stack;remembered=stack/true;side=side/true/side;cleared=side;single_hidden=true")
+        narrow = run_probe(self.tab5(), "var b=document.querySelector('.ba-cols:not([hidden]) .expand-both'); b.click(); out.push('narrow='+document.querySelector('.viewer-panes').dataset.layout)",
+                           self.dir / "build" / "probe-layout2.html", "700,1000")
+        self.assertEqual(narrow, "narrow=stack")
+
+class ConceptPlainTests(FixtureCase):
+    def tab3(self):
+        run("render", str(self.dir), "--tabs", "tab3")
+        return (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+
+    def block(self, cid="C1"):
+        return self.tab3().split(f'<article class="card blk" id="{cid}">')[1].split("</article>")[0]
+
+    def test_header_order_title_one_line_card_analogy_then_diagram_then_technical_text(self):
+        block = self.block()
+        order = [block.index(x) for x in ("<h2>", 'class="oneline"', 'class="plain-card"', 'class="analogy"', 'class="dg"', 'class="tx"')]
+        self.assertEqual(order, sorted(order))
+
+    def test_one_line_is_large_and_in_plain_words(self):
+        block = self.block()
+        self.assertIn("When a lead changes a status, everyone sees it within seconds instead of waiting for the weekly sheet.", block)
+        self.assertIn("In one line", block)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.oneline p?[^{]*\{[^}]*font-size: (?:2\d|3\d)px")
+
+    def test_three_row_before_now_why_card(self):
+        card = re.search(r'<dl class="plain-card">.*?</dl>', self.block(), re.S).group(0)
+        text = re.sub(r"<[^>]+>", "", card)
+        for label in ("Before", "Now", "Why it matters"):
+            self.assertIn(label, text)
+        self.assertEqual(card.count("<dt>"), 3)
+        self.assertIn("weekly sheet", text)
+        self.assertIn("in seconds", text)
+
+    def test_analogy_is_optional(self):
+        self.assertIn("Think of it like", self.block())
+        self.assertIn("group chat notification", self.block())
+        self.edit("concepts.json", lambda d: d["concepts"][0].pop("analogy"))
+        self.assertNotIn("Think of it like", self.block())
+        self.assertNotIn("concept-plain-missing", self.codes()[1])
+
+    def test_kind_label_sits_next_to_the_title_and_side_index_shows_the_plain_line(self):
+        text = self.tab3()
+        self.assertIn('<h2>Event-driven status <span class="kind">new pattern</span></h2>', re.sub(r"<span data-l=\"th\">.*?</span>", "", re.sub(r"<span data-l=\"en\">(.*?)</span>", r"\1", text)))
+        side = text.split('<aside class="side">')[1].split("</aside>")[0]
+        self.assertIn("When a lead changes a status, everyone sees it within seconds", side)
+        self.assertNotIn("new pattern", side)
+        self.assertIn('class="side-sub"', side)
+
+    def test_missing_plain_is_a_warning_and_side_falls_back_to_the_kind_label(self):
+        self.edit("concepts.json", lambda d: d["concepts"][1].pop("plain"))
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("concept-plain-missing", codes)
+        self.assertIn("C2", out)
+        side = self.tab3().split('<aside class="side">')[1].split("</aside>")[0]
+        self.assertIn("new component", side)
+
+    def test_thai_exists_for_every_plain_field_and_data_rows_are_not_translated(self):
+        text = self.tab3()
+        for needle in ("เมื่อหัวหน้าเปลี่ยนสถานะ", "ลองนึกถึง", "สรุปหนึ่งบรรทัด", "ทำไมจึงสำคัญ"):
+            self.assertIn(needle, text)
+        entries = sync.content_entries(sync.load_project(self.dir))
+        for key in ("plain", "before", "now", "why", "analogy"):
+            self.assertIn(key, entries["C1"])
+        self.assertEqual([p for p in entries["CMP-QUEUE"] if "infra" in p], [])
+        self.assertEqual([p for p in entries["CMP-DB"] if "example" in p or "samples" in p], [])
 
 class OptionCardContrastTests(FixtureCase):
     def test_option_card_css_uses_surface_and_normal_text(self):
@@ -1191,6 +1304,123 @@ class DataDictionaryTests(FixtureCase):
     def test_print_opens_every_dictionary_table(self):
         document = sync.Site(sync.load_project(self.dir), print_mode=True).print_document(["tab5"])
         self.assertEqual(len(re.findall(r'<details class="dict" open>', document)), 2)
+
+def _node_supports_cdp_helper():
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        return False
+    try:
+        out = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=20).stdout.strip().lstrip("v")
+        return int(out.split(".")[0]) >= 22  # global WebSocket
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+@unittest.skipUnless(sync.find_browser() and _node_supports_cdp_helper(), "needs headless Edge/Chrome and Node 22+")
+class BrowserCdpTests(unittest.TestCase):
+    """Real-browser checks over the DevTools protocol (tests/browser/cdp_check.mjs): phone emulation, real touch events, Thai rendering.
+    Set CDP_SHOTS_DIR to keep the screenshots; otherwise they go to a temp folder that is removed afterwards."""
+
+    results = {}
+    shots = []
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, True)
+        artifact = cls.tmp / "artifact"
+        shutil.copytree(FIXTURE, artifact, ignore=shutil.ignore_patterns("build"))
+        run("render", str(artifact))
+        shots = Path(os.environ.get("CDP_SHOTS_DIR") or cls.tmp / "shots")
+        script = REPO / "tests" / "browser" / "cdp_check.mjs"
+        done = subprocess.run(["node", str(script), "--browser", sync.find_browser(), "--pages", str(artifact / "build"), "--shots", str(shots)],
+                              capture_output=True, text=True, encoding="utf-8", timeout=360)
+        line = next((ln for ln in reversed(done.stdout.splitlines()) if ln.startswith("RESULT:")), None)
+        if line is None:
+            raise AssertionError("cdp_check.mjs produced no result:\n" + done.stderr[-800:])
+        cls.results = json.loads(line[len("RESULT:"):])
+        cls.shots = cls.results.pop("_shots", [])
+
+    def assert_group(self, prefix, expected_at_least):
+        group = {name: r for name, r in self.results.items() if name.startswith(prefix)}
+        self.assertGreaterEqual(len(group), expected_at_least, f"only {len(group)} {prefix}* checks ran")
+        for name, outcome in sorted(group.items()):
+            with self.subTest(check=name):
+                self.assertTrue(outcome["ok"], f"{name}: {outcome['detail']}")
+
+    def test_harness_ran_cleanly(self):
+        self.assertNotIn("harness.error", self.results, self.results.get("harness.error", {}).get("detail"))
+
+    def test_phone_layout_on_all_six_pages(self):
+        self.assert_group("phone.", 6 + 1 + 2 + 2 + 3 + 1 + 3 + 1)  # overflow x6, tab bar, side index x2, pairs x2, tables x3, viewer bar, cards x3, crud scroll box
+        for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
+            self.assertIn(f"phone.no_horizontal_overflow.{page}", self.results)
+
+    def test_phone_360_and_390_pages_never_scroll_sideways(self):
+        self.assert_group("phone360.", 6)
+        for page in ("intent", "tab1", "tab2", "tab3", "tab4", "tab5"):
+            for prefix in ("phone", "phone360"):
+                self.assertTrue(self.results[f"{prefix}.no_horizontal_overflow.{page}"]["ok"])
+        self.assertTrue(any("phone360-tab1" in shot for shot in self.shots))
+
+    def test_real_touch_viewer_pinch_drag_backdrop_and_compare(self):
+        self.assert_group("touch.", 11)
+
+    def test_viewer_layout_toggle_on_desktop(self):
+        self.assert_group("desktop.", 4)
+
+    def test_thai_glyphs_render_and_nothing_overflows(self):
+        self.assert_group("thai.", 2 + 12)
+
+    def test_screenshots_were_saved(self):
+        self.assertGreaterEqual(len(self.shots), 15)
+        for shot in self.shots:
+            self.assertTrue(Path(shot).is_file() and Path(shot).stat().st_size > 1000, shot)
+
+class MobileTableTests(FixtureCase):
+    def pages(self):
+        run("render", str(self.dir))
+        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+
+    def test_every_table_on_every_page_sits_in_a_scroll_box(self):
+        for name, text in self.pages().items():
+            with self.subTest(page=name):
+                self.assertEqual(text.count("<table"), text.count('<div class="table-wrap"><table'))
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.table-wrap \{[^}]*overflow-x: auto")
+
+    def test_key_tables_turn_into_labelled_cards_on_narrow_screens(self):
+        pages = self.pages()
+        for page, marker in (("tab1", '<table class="uc-table stack">'), ("tab1", '<table class="stack">'), ("tab4", '<table class="stack">'), ("tab5", '<table class="dict-cols stack">')):
+            self.assertIn(marker, pages[page])
+        for page in ("tab1", "tab4", "tab5"):
+            for table in re.findall(r'<table class="[^"]*stack[^"]*">.*?</table>', pages[page], re.S):
+                rows = re.findall(r"<tr>.*?</tr>", table, re.S)
+                self.assertTrue(rows)
+                for row in rows:
+                    cells = re.findall(r"<td[^>]*>.*?</td>", row, re.S)
+                    self.assertTrue(cells and all('class="cell-label"' in c for c in cells), row[:120])
+                self.assertIn('<tr class="stack-head">', table)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        phone = css.split("@media (max-width: 640px)")[1].split("\n}\n")[0]
+        for needle in ("table.stack", ".stack-head", ".cell-label"):
+            self.assertIn(needle, phone)
+        self.assertRegex(css, r"\.cell-label \{ display: none; \}")  # hidden on wide screens
+
+    def test_crud_matrix_stays_a_scroll_box_with_a_sticky_first_column(self):
+        text = self.pages()["tab1"]
+        self.assertIn('<table class="crud-table">', text)
+        self.assertNotIn("crud-table stack", text)
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.crud-table th:first-child, \.crud-table td:first-child \{[^}]*position: sticky; left: 0")
+
+    def test_width_audit_rules(self):
+        css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
+        for rule in (r"\.card[^{]*\{[^}]*min-width: 0", r"overflow-wrap: anywhere", r"svg[^{]*\{[^}]*max-width: 100%", r"body \{[^}]*overflow-x: clip",
+                     r"\.nav \{[^}]*overflow-x: auto"):
+            self.assertRegex(css, rule)
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

@@ -11,13 +11,16 @@
   </div>
 </div>
 <!--part:side_concept-->
-<a href="#{{id}}"><strong>{{id}}</strong> {{title}}<span class="side-kind">{{label}}</span></a>
+<a href="#{{id}}"><strong>{{id}}</strong> {{title}}<span class="side-sub">{{sub}}</span></a>
 <!--/part-->
 <!--part:concept-->
 <article class="card blk" id="{{id}}">
   <header class="blk-head">
-    <div class="lbl">{{id}} · {{label}}</div>
-    <h2>{{title}}</h2>
+    <div class="lbl">{{id}}</div>
+    <h2>{{title}} <span class="kind">{{label}}</span></h2>
+    {{oneline}}
+    {{card}}
+    {{analogy}}
   </header>
   <div class="dg">{{diagram}}</div>
   <div class="tx">
@@ -26,6 +29,18 @@
     <span class="muted">{{ui:t3.related}} {{related}}</span>
   </div>
 </article>
+<!--/part-->
+<!--part:oneline-->
+<p class="oneline"><span class="lbl">{{ui:t3.oneline}}</span>{{text}}</p>
+<!--/part-->
+<!--part:plain_card-->
+<dl class="plain-card">{{rows}}</dl>
+<!--/part-->
+<!--part:plain_row-->
+<div><dt>{{label}}</dt><dd>{{text}}</dd></div>
+<!--/part-->
+<!--part:analogy-->
+<p class="analogy"><strong>{{ui:t3.analogy}}</strong> {{text}}</p>
 <!--/part-->
 <!--part:terms-->
 <p class="muted">{{ui:t3.terms}}: {{text}}</p>

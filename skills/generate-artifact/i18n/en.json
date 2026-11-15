@@ -153,5 +153,13 @@
   "dict.example": "Example",
   "dict.yes": "yes",
   "dict.no": "no",
-  "dict.columns": "{n} columns"
+  "dict.columns": "{n} columns",
+  "viewer.layout": "Layout",
+  "viewer.layout_side": "Side by side",
+  "viewer.layout_stack": "Top / bottom",
+  "t3.oneline": "In one line",
+  "t3.before": "Before",
+  "t3.now": "Now",
+  "t3.why_matters": "Why it matters",
+  "t3.analogy": "Think of it like"
 }

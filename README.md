@@ -29,7 +29,7 @@ python skills/generate-artifact/scripts/artifact_sync.py export-pdf <dir> [--lan
 python skills/generate-artifact/scripts/artifact_sync.py i18n-diff  <dir>
 ```
 
-Tests: `python -m unittest discover tests`
+Tests: `python -m unittest discover tests` (the real-browser tests, `tests/browser/cdp_check.mjs`, need Edge or Chrome and Node 22+; they skip otherwise; set `CDP_SHOTS_DIR` to keep the phone/touch/Thai screenshots)
 
 ## Folder layout
 

@@ -65,9 +65,28 @@
 
   /* ---- diagram viewer: in-page overlay, one pane or two (compare), wheel/pinch zoom, drag to pan.
          No popups, no Fullscreen API (claude.ai pages run in a sandboxed frame). ---- */
-  var viewer, panes = [], syncZoom = true, syncPan = true, active = 0, lastTrigger, moved = false;
+  var viewer, panes = [], syncZoom = false, syncPan = false, active = 0, lastTrigger, moved = false;
   var pointers = {};
   var pinch = { pane: -1, dist: 0 };
+  var LAYOUT_KEY = "ga-viewer-layout";
+  var layoutChoice = null;  /* null = auto; "side" or "stack" once the user picked one */
+  try {
+    var savedLayout = localStorage.getItem(LAYOUT_KEY);
+    if (savedLayout === "side" || savedLayout === "stack") layoutChoice = savedLayout;
+  } catch (e) { /* storage blocked: stay on auto */ }
+
+  function effectiveLayout() {
+    return layoutChoice || (window.innerWidth >= 900 && window.innerWidth > window.innerHeight ? "side" : "stack");
+  }
+
+  function applyLayout(refit) {
+    var mode = effectiveLayout();
+    viewer.querySelector(".viewer-panes").dataset.layout = mode;
+    ["side", "stack"].forEach(function (name) {
+      viewer.querySelector('[data-viewer="layout-' + name + '"]').setAttribute("aria-pressed", String(name === mode));
+    });
+    if (refit) fitAll();
+  }
 
   function initViewer() {
     viewer = document.getElementById("viewer");
@@ -166,19 +185,21 @@
     var compare = svgs.length > 1;
     panes[0].el.hidden = false;
     panes[1].el.hidden = !compare;
-    syncZoom = true;
-    syncPan = true;
+    syncZoom = false;
+    syncPan = false;
     active = 0;
     ["sync-zoom", "sync-pan"].forEach(function (name) {
       var toggle = viewer.querySelector('[data-viewer="' + name + '"]');
       toggle.hidden = !compare;
-      toggle.setAttribute("aria-pressed", "true");
+      toggle.setAttribute("aria-pressed", "false");
     });
     mount(panes[0], svgs[0], compare ? labels[0] : "");
     if (compare) mount(panes[1], svgs[1], labels[1]);
     document.getElementById("viewer-caption").textContent = compare ? labels.join(" / ") : titleOf(svgs[0]);
     viewer.hidden = false;
     doc.classList.add("viewer-open");
+    viewer.querySelector(".layout-seg").hidden = !compare;
+    applyLayout(false);
     fitAll();
     viewer.querySelector('[data-viewer="close"]').focus();
   }
@@ -285,7 +306,11 @@
         if (name === "close") closeViewer();
         else if (name === "in") zoomCenter(1.25);
         else if (name === "out") zoomCenter(0.8);
-        else if (name === "sync-zoom") {
+        else if (name === "layout-side" || name === "layout-stack") {
+          layoutChoice = name === "layout-side" ? "side" : "stack";
+          try { localStorage.setItem(LAYOUT_KEY, layoutChoice); } catch (err) { /* ignore */ }
+          applyLayout(true);
+        } else if (name === "sync-zoom") {
           syncZoom = !syncZoom;
           action.setAttribute("aria-pressed", String(syncZoom));
           if (syncZoom) { var r = panes[active].stage.getBoundingClientRect(); zoomOthers(panes[active], r.width / 2, r.height / 2); }
@@ -358,6 +383,10 @@
     }
     update();
   }
+
+  window.addEventListener("resize", function () {
+    if (viewerOpen() && !layoutChoice && !panes[1].el.hidden) applyLayout(true);
+  });
 
   function init() {
     initSideIndex();

@@ -54,7 +54,10 @@ INTENT_SECTIONS = {"what": "What", "why": "Why", "before": "Before state",
 INTENT_DIAGRAM = "diagrams/intent.svg"
 # Only these keys hold translatable prose; IDs, names, enums and code are never translated.
 TEXT_KEYS = {"title", "summary", "what", "why", "reason", "pros", "cons", "cost", "risk",
-             "sees", "terms", "label", "choice_reason", "revisit_when", "text", "meaning"}
+             "sees", "terms", "label", "choice_reason", "revisit_when", "text", "meaning",
+             "plain", "before", "now", "analogy"}
+# data, not prose: never translated even when a key name matches
+NON_TRANSLATABLE = {"infra", "example", "samples", "sample_rows", "data", "files", "default"}
 
 log = logging.getLogger("artifact_sync")
 esc = html.escape
@@ -169,6 +172,10 @@ def flatten_text(obj, path=""):
     out = {}
     if isinstance(obj, dict):
         for key, value in obj.items():
+            if key in NON_TRANSLATABLE:
+                continue
+            if key == "diagrams" and isinstance(value, dict):
+                value = {"flowchart": value.get("flowchart") or []}  # only flowchart titles are prose; the rest are file paths
             sub = f"{path}.{key}" if path else key
             if isinstance(value, str):
                 if key in TEXT_KEYS:
@@ -543,6 +550,8 @@ def check_concepts(project):
         cid = concept.get("id", "?")
         if not concept.get("diagram"):
             out.append(Finding("error", "concept-no-diagram", f"concepts.json {cid}", "every concept needs at least one diagram."))
+        if not concept.get("plain"):
+            out.append(Finding("warning", "concept-plain-missing", f"concepts.json {cid}", "add plain: one sentence a non-engineer understands (plus before, now, why, optional analogy)."))
         out += _unknown("concepts.json", cid, concept.get("ucs"), known["uc"], "UC")
         out += _unknown("concepts.json", cid, concept.get("decisions"), known["decision"], "decision")
         out += _unknown("concepts.json", cid, concept.get("components"), known["component"], "component")
@@ -1016,15 +1025,21 @@ class Site:
 
     def build_tab3(self):
         concepts = self.p.concept_list
-        side = "".join(self.part("side_concept", id=esc(c.get("id", "")), title=self.tx(c.get("id"), "title"), label=self.tx(c.get("id"), "label"))
-                       for c in concepts)
+        side = "".join(self.part("side_concept", id=esc(c.get("id", "")), title=self.tx(c.get("id"), "title"),
+                                 sub=self.tx(c.get("id"), "plain") if c.get("plain") else self.tx(c.get("id"), "label")) for c in concepts)
         blocks = "".join(self.part(
             "concept", id=esc(c.get("id", "")), label=self.tx(c.get("id"), "label"), title=self.tx(c.get("id"), "title"),
+            oneline=self.part("oneline", text=self.tx(c.get("id"), "plain")) if c.get("plain") else "",
+            card=self._plain_card(c), analogy=self.part("analogy", text=self.tx(c.get("id"), "analogy")) if c.get("analogy") else "",
             diagram=self.diagram(c.get("diagram"), c.get("id", "")), summary=self.tx_block(c.get("id"), "summary"),
             terms=self.part("terms", text=self.tx(c.get("id"), "terms")) if c.get("terms") else "",
             related=", ".join(filter(None, [self.refs(c.get("decisions")), self.refs(c.get("ucs")), self.refs(c.get("components"))])))
             for c in concepts)
         return dict(side=side, blocks=blocks), ""
+
+    def _plain_card(self, concept):
+        rows = [(key, ui) for key, ui in (("before", "t3.before"), ("now", "t3.now"), ("why", "t3.why_matters")) if concept.get(key)]
+        return self.part("plain_card", rows="".join(self.part("plain_row", label=self.ui(ui), text=self.tx(concept.get("id"), key)) for key, ui in rows)) if rows else ""
 
     def build_tab4(self):
         ucs = self.p.ucs
@@ -1093,7 +1108,7 @@ class Site:
         title, header_extra, content = self.content(tab)
         label = self.ui("page.intent" if tab == "intent" else "page.solution")
         nav_intent, nav_solution = self.nav(tab)
-        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync_zoom", "sync_pan")}
+        labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync_zoom", "sync_pan", "layout", "layout_side", "layout_stack")}
         return self.fill(
             self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),

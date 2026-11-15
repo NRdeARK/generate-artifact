@@ -44,7 +44,7 @@ One large, living document that runs from design to finish. Input: the **approve
 
 ## Tab 3 — Concepts
 - The intro for team review: explains what's new in the solution (new terms, new components, behavior changes) **at concept level**.
-- **One block per concept.** The concept is the main thing; text is the description.
+- **One block per concept.** The concept is the main thing; text is the description. The block header gives, right under the technical title (kind label beside it): a large **In one line** plain sentence, a small **Before / Now / Why it matters** card, and an optional **Think of it like** analogy; the technical text and new terms follow the diagram. The side index shows the one-line text as each concept's subtitle.
 - **At least 1 diagram per concept block.**
 - Ordered so a newcomer can read top to bottom.
 

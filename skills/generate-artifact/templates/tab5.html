@@ -21,7 +21,7 @@
 {{files}}
 <!--/part-->
 <!--part:data_table-->
-<div><span class="lbl">{{ui:t5.data}}</span><table><tr><th>{{ui:col.object}}</th><th>{{ui:col.change}}</th><th>{{ui:col.migration}}</th></tr>{{rows}}</table></div>
+<div><span class="lbl">{{ui:t5.data}}</span><div class="table-wrap"><table><tr><th>{{ui:col.object}}</th><th>{{ui:col.change}}</th><th>{{ui:col.migration}}</th></tr>{{rows}}</table></div></div>
 <!--/part-->
 <!--part:dictionary-->
 <div class="dictionary"><span class="lbl">{{ui:dict.title}}</span>{{tables}}</div>
@@ -29,13 +29,13 @@
 <!--part:dict_table-->
 <details class="dict" {{open_attr}}>
   <summary><strong>{{table}}</strong> {{badge}} <span class="muted">{{count}}</span></summary>
-  <table class="dict-cols"><tr><th>{{ui:dict.name}}</th><th>{{ui:dict.type}}</th><th>{{ui:dict.nullable}}</th><th>{{ui:dict.default}}</th><th>{{ui:dict.meaning}}</th><th>{{ui:dict.allowed}}</th><th>{{ui:dict.samples}}</th></tr>{{rows}}</table>
+  <div class="table-wrap"><table class="dict-cols stack"><tr class="stack-head"><th>{{ui:dict.name}}</th><th>{{ui:dict.type}}</th><th>{{ui:dict.nullable}}</th><th>{{ui:dict.default}}</th><th>{{ui:dict.meaning}}</th><th>{{ui:dict.allowed}}</th><th>{{ui:dict.samples}}</th></tr>{{rows}}</table></div>
   {{examples}}
   {{sample_rows}}
 </details>
 <!--/part-->
 <!--part:dict_row-->
-<tr><td class="nowrap"><span class="badge {{status}}"><span aria-hidden="true">{{marker}}</span></span> <code>{{name}}</code></td><td><code>{{type}}</code></td><td>{{nullable}}</td><td><code>{{default}}</code></td><td>{{meaning}}</td><td>{{values}}</td><td>{{samples}}</td></tr>
+<tr><td class="nowrap"><span class="cell-label">{{ui:dict.name}}</span><span class="badge {{status}}"><span aria-hidden="true">{{marker}}</span></span> <code>{{name}}</code></td><td><span class="cell-label">{{ui:dict.type}}</span><code>{{type}}</code></td><td><span class="cell-label">{{ui:dict.nullable}}</span>{{nullable}}</td><td><span class="cell-label">{{ui:dict.default}}</span><code>{{default}}</code></td><td><span class="cell-label">{{ui:dict.meaning}}</span>{{meaning}}</td><td><span class="cell-label">{{ui:dict.allowed}}</span>{{values}}</td><td><span class="cell-label">{{ui:dict.samples}}</span>{{samples}}</td></tr>
 <!--/part-->
 <!--part:dict_value-->
 <div><code>{{value}}</code> = {{meaning}}</div>
@@ -44,10 +44,10 @@
 <p class="muted">{{ui:dict.example}} <code>{{column}}</code>: <code>{{before}}</code> &rarr; <code>{{after}}</code></p>
 <!--/part-->
 <!--part:dict_samples-->
-<div><span class="lbl">{{ui:dict.sample_rows}}</span><table><tr>{{heads}}</tr>{{rows}}</table></div>
+<div><span class="lbl">{{ui:dict.sample_rows}}</span><div class="table-wrap"><table><tr>{{heads}}</tr>{{rows}}</table></div></div>
 <!--/part-->
 <!--part:infra_table-->
-<div><span class="lbl">{{ui:t5.infra}}</span><table><tr><th>{{ui:col.item}}</th><th>{{ui:ba.before}}</th><th>{{ui:ba.after}}</th></tr>{{rows}}</table></div>
+<div><span class="lbl">{{ui:t5.infra}}</span><div class="table-wrap"><table><tr><th>{{ui:col.item}}</th><th>{{ui:ba.before}}</th><th>{{ui:ba.after}}</th></tr>{{rows}}</table></div></div>
 <!--/part-->
 <!--part:row3-->
 <tr><td>{{a}}</td><td>{{b}}</td><td>{{c}}</td></tr>

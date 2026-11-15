@@ -26,7 +26,7 @@
   <div class="grid3">
     <section class="card">
       <div class="lbl">{{ui:t4.touchpoints}}</div>
-      <table><tr><th>{{ui:t4.scenario}}</th><th>{{ui:t4.step}}</th><th>{{ui:t4.sees}}</th></tr>{{touchpoints}}</table>
+      <div class="table-wrap"><table class="stack"><tr class="stack-head"><th>{{ui:t4.scenario}}</th><th>{{ui:t4.step}}</th><th>{{ui:t4.sees}}</th></tr>{{touchpoints}}</table></div>
     </section>
     <section class="card">
       <div class="lbl">{{ui:t4.legend}}</div>
@@ -44,7 +44,7 @@
 <button type="button" class="tog small {{kind}}" data-target="{{target}}" data-fragment="{{fragment}}" aria-pressed="false">{{label}}</button>
 <!--/part-->
 <!--part:touchpoint_row-->
-<tr><td>{{scenario}}</td><td>{{step}}</td><td>{{sees}}</td></tr>
+<tr><td><span class="cell-label">{{ui:t4.scenario}}</span>{{scenario}}</td><td><span class="cell-label">{{ui:t4.step}}</span>{{step}}</td><td><span class="cell-label">{{ui:t4.sees}}</span>{{sees}}</td></tr>
 <!--/part-->
 <!--part:detail-->
 <details class="card" {{open_attr}}><summary>{{ui:t4.detail}}: {{title}}</summary>{{diagram}}</details>

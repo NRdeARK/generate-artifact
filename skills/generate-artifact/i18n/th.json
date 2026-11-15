@@ -153,5 +153,13 @@
   "dict.example": "ตัวอย่าง",
   "dict.yes": "ได้",
   "dict.no": "ไม่ได้",
-  "dict.columns": "{n} คอลัมน์"
+  "dict.columns": "{n} คอลัมน์",
+  "viewer.layout": "รูปแบบการจัดวาง",
+  "viewer.layout_side": "เคียงข้างกัน",
+  "viewer.layout_stack": "บน / ล่าง",
+  "t3.oneline": "สรุปหนึ่งบรรทัด",
+  "t3.before": "ก่อน",
+  "t3.now": "ตอนนี้",
+  "t3.why_matters": "ทำไมจึงสำคัญ",
+  "t3.analogy": "ลองนึกถึง"
 }

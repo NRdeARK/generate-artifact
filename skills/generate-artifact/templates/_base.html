@@ -24,8 +24,9 @@
   <div class="viewer-bar">
     <span class="viewer-caption" id="viewer-caption"></span>
     <div class="viewer-tools">
-      <button type="button" data-viewer="sync-zoom" aria-pressed="true" aria-label="{{label_sync_zoom}}" hidden>{{ui:viewer.sync_zoom}}</button>
-      <button type="button" data-viewer="sync-pan" aria-pressed="true" aria-label="{{label_sync_pan}}" hidden>{{ui:viewer.sync_pan}}</button>
+      <span class="layout-seg" role="group" aria-label="{{label_layout}}" hidden><button type="button" data-viewer="layout-side" aria-pressed="false" aria-label="{{label_layout_side}}">{{ui:viewer.layout_side}}</button><button type="button" data-viewer="layout-stack" aria-pressed="false" aria-label="{{label_layout_stack}}">{{ui:viewer.layout_stack}}</button></span>
+      <button type="button" data-viewer="sync-zoom" aria-pressed="false" aria-label="{{label_sync_zoom}}" hidden>{{ui:viewer.sync_zoom}}</button>
+      <button type="button" data-viewer="sync-pan" aria-pressed="false" aria-label="{{label_sync_pan}}" hidden>{{ui:viewer.sync_pan}}</button>
       <button type="button" data-viewer="out" aria-label="{{label_zoom_out}}">&minus;</button>
       <button type="button" data-viewer="reset" aria-label="{{label_fit}}">{{ui:viewer.fit}}</button>
       <button type="button" data-viewer="in" aria-label="{{label_zoom_in}}">+</button>

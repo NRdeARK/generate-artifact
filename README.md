@@ -1,24 +1,33 @@
 # generate-artifact
 
-A Claude Code plugin that turns project work into two living, **private** claude.ai artifacts:
+A multi-agent plugin (**Antigravity**, **Claude Code**, **Codex**, and any `.agents/skills` runtime) that turns project work into two living solution artifacts (self-contained HTML/PDF, plus optional **private** `claude.ai` hosted pages when running in Claude):
 
 - an **intent** page: what / why / before state / constraints / outcome success;
 - a **5-tab solution** page: Use cases & coverage, Decisions, Concepts, UC details, Components.
 
-It ships one skill (`solution-artifact`), HTML templates, a swappable theme (Anthropic by default), EN/TH i18n and a stdlib-only Python script that validates traceability, renders pages and exports a combined PDF. Publishing is done by Claude with the claude-artifacts tools; the script never touches the network.
+It ships one skill (`solution-artifact`), HTML templates, a swappable theme (Anthropic by default), EN/TH i18n and a stdlib-only Python script that validates traceability, renders self-contained HTML pages and exports a combined PDF. Optional `claude.ai` publishing is done by Claude when `claude-artifacts` tools are available; the script never touches the network.
 
 ## Install
 
+### Antigravity (`agy`)
+```
+agy plugin install https://github.com/NRdeARK/generate-artifact
+```
+
+### Claude Code
 ```
 claude plugin marketplace add NRdeARK/generate-artifact
 claude plugin install generate-artifact@generate-artifact
 ```
 
+### Codex / Generic `.agents/skills`
+Clone the repo and symlink or copy `skills/solution-artifact` into `~/.agents/skills/solution-artifact` (or `~/.codex/skills/solution-artifact`).
+
 Requires Python 3.9+ (stdlib only) and git. PDF export uses headless Edge or Chrome if found.
 
 ## Use
 
-Ask Claude: "generate the intent artifact for <project>", then, after you approve it in chat, "generate the solution artifact". Claude follows `skills/solution-artifact/SKILL.md`: write data files, translate Thai changes, `validate`, commit, `render`, publish, record URLs in `artifacts.json`.
+Ask your agent: "generate the intent artifact for `<project>`", then, after you approve it in chat, "generate the solution artifact". The agent follows `skills/solution-artifact/SKILL.md`: write data files, translate Thai changes, `validate`, commit, `render` to `docs/artifact/build/<tab>.html`, and (in Claude) publish and record URLs in `artifacts.json`.
 
 Script (run from the plugin, point it at a project's `docs/artifact` folder):
 
@@ -34,7 +43,8 @@ Tests: `python -m unittest discover tests` (the real-browser tests, `tests/brows
 ## Folder layout
 
 ```
-.claude-plugin/           plugin.json, marketplace.json
+.antigravity-plugin/      plugin.json (Antigravity native manifest)
+.claude-plugin/           plugin.json, marketplace.json (Claude Code manifest)
 skills/solution-artifact/
   SKILL.md                router: intent vs solution, publish loop, sharing warning
   intent.md, solution.md  the spec for each artifact
@@ -50,7 +60,7 @@ Per project (`docs/artifact/`): `intent.md`, `registry.json`, `usecases.json`, `
 
 ## Notes
 
-- Diagrams are produced with the `diagram-design:diagram-design` skill and stay English-only.
+- Diagrams are produced with the `diagram-design` skill (`diagram-design:diagram-design` in Claude) and stay English-only.
 - Tabs without data are shown disabled in the nav, never hidden.
 - Tab 4 and Tab 5 contain code details: check for secrets before sharing a page.
 - Version history is git; footers and changelogs are generated from `git log`.

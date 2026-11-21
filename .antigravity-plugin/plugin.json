@@ -1,0 +1,12 @@
+{
+  "name": "generate-artifact",
+  "description": "Turn project work into living HTML/PDF solution artifacts (and optional private claude.ai pages): an intent page and a 5-tab solution page (use cases, decisions, concepts, UC details, components). Includes templates, an Anthropic theme, EN/TH i18n and a validate/render/export sync script.",
+  "version": "0.1.0",
+  "author": {
+    "name": "NRdeARK",
+    "url": "https://github.com/NRdeARK"
+  },
+  "homepage": "https://github.com/NRdeARK/generate-artifact",
+  "repository": "https://github.com/NRdeARK/generate-artifact",
+  "license": "MIT"
+}

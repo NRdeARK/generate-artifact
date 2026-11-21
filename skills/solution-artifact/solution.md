@@ -15,7 +15,7 @@ One large, living document that runs from design to finish. Input: the **approve
 - The same IDs are used in all tabs.
 
 ### Diagrams
-- **Every diagram is made with the `diagram-design:diagram-design` skill** (swimlane, sequence, tree, architecture, ER…), styled from the same component registry.
+- **Every diagram is made with the `diagram-design` skill** (`diagram-design:diagram-design` in Claude) (swimlane, sequence, tree, architecture, ER…), styled from the same component registry.
 
 ### Collapsing
 - Anything "done" or "detail" starts **collapsed**: decided decision groups, change tracks, file lists.
@@ -37,7 +37,7 @@ One large, living document that runs from design to finish. Input: the **approve
   - The options compared side by side (pros, cons, cost, risk, which UCs each satisfies).
   - The choice + reason, with a date.
   - **Collapses automatically once decided**, so open decisions stay on top.
-- **Read-only, no click-to-choose.** The page has no choose buttons and no in-page state. The user decides **in chat or in an artifact comment**, often with a custom answer that isn't one of the options, and Claude updates the data and republishes. (Click state wouldn't reach Claude and would be lost on a browser or cache change.)
+- **Read-only, no click-to-choose.** The page has no choose buttons and no in-page state. The user decides **in chat or in an artifact comment**, often with a custom answer that isn't one of the options, and the agent updates the data and republishes. (Click state wouldn't reach the agent and would be lost on a browser or cache change.)
 - **Every option shows its status and reason**: `chosen` (why), `deferred` (why, and what would bring it back), `rejected` (why not). Deferred options stay visible in the group and in the tree.
 - **UI decisions**: when a choice is visual, include low-fi **wireframes** per option for comparison.
 - Decisions made *between* paths (e.g. "picked queue over cron, which forced X") are recorded here too, linked to tree nodes.
@@ -90,7 +90,7 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English → spawn a **Sonnet sub-agent** to translate into Thai → publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow**: write and approve English → spawn a **fast/mid-tier sub-agent** (e.g. Sonnet, Gemini Flash/Neon, or Codex) to translate into Thai → render/publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
 - **Switching**: an EN | TH toggle on every page. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
@@ -105,7 +105,7 @@ Per UC (Main first, then Affected):
 ## Foundations (decided 2026-11-15)
 
 ### Project folder & data
-- Data lives **in the project's own repo** at `docs/artifact/`, next to the code that Tab 4 reads and versioned with it. Projects without a repo use `<claude-space>/projects/<name>/artifact/` with its own `git init`.
+- Data lives **in the project's own repo** at `docs/artifact/`, next to the code that Tab 4 reads and versioned with it. Projects without a repo use `<workspace>/projects/<name>/artifact/` with its own `git init`.
 - Layout:
   ```
   docs/artifact/
@@ -121,8 +121,8 @@ Per UC (Main first, then Affected):
 - JSON for anything the script reads; Markdown for prose (intent).
 
 ### Feedback loop: built-in, nothing to build
-- The user gives feedback **in chat or in artifact comments**. Claude reads the comment, updates the data, republishes and replies in the thread.
-- Comments only work while pages are hosted as claude.ai artifacts. Chat works anywhere.
+- The user gives feedback **in chat or in artifact comments**. The agent reads the feedback, updates the data, re-renders/republishes, and replies in the thread.
+- Comments only work while pages are hosted as `claude.ai` artifacts. Chat works anywhere.
 
 ### Traceability check (in the sync script)
 - Validates the chain **outcome → UC → decision → component → files** and fails or warns on orphans: a UC with no sequence diagram, a component change with no reason or UC, a decision linked to no UC, an ID used but missing from the registry, a missing or stale TH translation, a CRUD cell with no UC and no "n/a (why)".
@@ -131,7 +131,7 @@ Per UC (Main first, then Affected):
 - Each tab is its own artifact, so titles must tell them apart in claude.ai lists: `<Project> · <n> <Tab>`, e.g. `Status Board · 0 Intent`, `Status Board · 2 Decisions`. The number keeps them sorted. No version in the title (git has it).
 
 ### Sharing (warn every time)
-- Pages start private. Before the user shares, remind them: **Tab 4 and Tab 5 contain real code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done in claude.ai, not by Claude.
+- Pages start private. Before the user shares, remind them: **Tab 4 and Tab 5 contain real code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done manually by the user, never by the agent.
 
 ### Export
 - **One combined PDF**: intent + all existing tabs in order, with a cover page, generated locally from the same templates in print mode. Toggles get expanded: bad paths and edge cases shown, collapsed sections opened.

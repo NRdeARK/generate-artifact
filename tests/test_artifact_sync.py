@@ -1789,10 +1789,13 @@ class TemplateHygieneTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_manifests_are_valid_json(self):
-        for name in ("plugin.json", "marketplace.json"):
-            data = json.loads((REPO / ".claude-plugin" / name).read_text(encoding="utf-8"))
+        claude_plugin = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        claude_mp = json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        agy_plugin = json.loads((REPO / ".antigravity-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        for data in (claude_plugin, claude_mp, agy_plugin):
             self.assertEqual(data["name"], "generate-artifact")
-        self.assertEqual(json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))["plugins"][0]["source"], "./")
+        self.assertEqual(agy_plugin["version"], claude_plugin["version"])
+        self.assertEqual(claude_mp["plugins"][0]["source"], "./")
 
 
 if __name__ == "__main__":

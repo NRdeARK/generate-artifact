@@ -93,7 +93,51 @@
       "step_changes": {
         "2": "changed",
         "4g": "added"
-      }
+      },
+      "steps": [
+        {
+          "id": "1",
+          "label": "[CALL] Open status page",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:2"
+        },
+        {
+          "id": "2",
+          "label": "[REST] Fetch project list",
+          "from": "CMP-WEB",
+          "to": "CMP-API",
+          "call": "web/src/api/projects.ts:3"
+        },
+        {
+          "id": "2.1",
+          "label": "[CALL] Hand over to read handler",
+          "from": "CMP-API",
+          "to": "CMP-API-READ",
+          "call": "api/src/read_handler.py:2"
+        },
+        {
+          "id": "3",
+          "label": "[SQL] Read latest status",
+          "from": "CMP-API-READ",
+          "to": "CMP-DB",
+          "call": "api/src/read_handler.py:3"
+        },
+        {
+          "id": "4",
+          "label": "[SQL] Return rows",
+          "from": "CMP-DB",
+          "to": "CMP-API-READ",
+          "call": "api/src/read_handler.py:4"
+        },
+        {
+          "id": "5",
+          "label": "[REST] Return project list",
+          "from": "CMP-API",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
+        }
+      ]
     },
     {
       "id": "UC-02",
@@ -175,7 +219,33 @@
         "3b": "added",
         "4e": "added",
         "4f": "changed"
-      }
+      },
+      "steps": [
+        {
+          "id": "1",
+          "label": "[REST] Submit new status",
+          "from": "CMP-WEB",
+          "to": "CMP-API"
+        },
+        {
+          "id": "2",
+          "label": "[MQ] Publish status event",
+          "from": "CMP-API",
+          "to": "CMP-QUEUE"
+        },
+        {
+          "id": "4",
+          "label": "[MQ] Deliver status event",
+          "from": "CMP-QUEUE",
+          "to": "CMP-AGG"
+        },
+        {
+          "id": "5",
+          "label": "[SQL] Save status and history",
+          "from": "CMP-AGG",
+          "to": "CMP-DB"
+        }
+      ]
     },
     {
       "id": "UC-03",
@@ -244,7 +314,30 @@
         "2": "changed",
         "4": "added",
         "3e": "added"
-      }
+      },
+      "steps": [
+        {
+          "id": "1",
+          "label": "[CALL] Start weekly export",
+          "from": "CMP-CRON",
+          "to": "CMP-CRON",
+          "call": "jobs/weekly_export.py:2"
+        },
+        {
+          "id": "2",
+          "label": "[SQL] Read week history",
+          "from": "CMP-CRON",
+          "to": "CMP-DB",
+          "call": "jobs/weekly_export.py:3"
+        },
+        {
+          "id": "4",
+          "label": "[CALL] Send weekly email",
+          "from": "CMP-CRON",
+          "to": "CMP-CRON",
+          "call": "jobs/weekly_export.py:4"
+        }
+      ]
     }
   ],
   "crud": [

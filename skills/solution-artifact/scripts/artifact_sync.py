@@ -57,7 +57,7 @@ TEXT_KEYS = {"title", "summary", "what", "why", "reason", "pros", "cons", "cost"
              "sees", "terms", "label", "choice_reason", "revisit_when", "text", "meaning",
              "plain", "before", "now", "analogy"}
 # data, not prose: never translated even when a key name matches
-NON_TRANSLATABLE = {"infra", "example", "samples", "sample_rows", "data", "files", "default"}
+NON_TRANSLATABLE = {"infra", "example", "samples", "sample_rows", "data", "files", "default", "steps"}
 
 log = logging.getLogger("artifact_sync")
 esc = html.escape
@@ -571,6 +571,116 @@ def check_step_changes(project):
     return out
 
 
+# Big-project rules for sequence diagrams. usecases.json UC field `steps` (optional) lists the arrows:
+# [{"id": "2", "label": "[REST] Fetch latest status", "from": "CMP-WEB", "to": "CMP-API", "call": "web/src/api.ts:12", "flow": "good"}]
+MAX_STEPS, MAX_PARTICIPANTS = 12, 6
+INFRA_KINDS = ("db", "store", "queue", "cache", "external")
+LABEL_TAGS = ("REST", "gRPC", "SQL", "MQ", "CACHE", "WS", "CALL")
+CODE_SOURCES = ("code", "mixed")
+TAG_RE = re.compile(r"^\[(%s)\]\s*\S" % "|".join(re.escape(t) for t in LABEL_TAGS))
+DETAIL_RES = (re.compile(r"\b(GET|POST|PUT|PATCH|DELETE)\b"),
+              re.compile(r"(?<![\w.])/[A-Za-z0-9_-]+(?:/[\w{}:.-]+)*"),
+              re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.*\b(FROM|INTO|SET)\b", re.I))
+CALL_RE = re.compile(r"^(.+):(\d+)$")
+
+
+def uc_steps(uc):
+    """The UC's step objects (dicts only); [] when absent or malformed."""
+    steps = uc.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def check_uc_size(uc):
+    uid, out = uc.get("id", "?"), []
+    by_flow = {}
+    for step in uc_steps(uc):
+        by_flow.setdefault(step.get("flow") or "good", []).append(step)
+    for flow, steps in by_flow.items():
+        if len(steps) > MAX_STEPS:
+            out.append(Finding("warning", "uc-too-large", f"usecases.json {uid} flow {flow}",
+                               f"{len(steps)} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
+    parts = uc.get("components") or []
+    if len(parts) > MAX_PARTICIPANTS:
+        out.append(Finding("warning", "uc-too-large", f"usecases.json {uid}",
+                           f"{len(parts)} participants (max {MAX_PARTICIPANTS}). Split it into smaller UCs, then redraw each diagram."))
+    return out
+
+
+def check_infra_participants(uc, registry, diagram_text=None):
+    """Steps that talk to a db/store/queue/cache/external component must keep it in the UC's participants and diagram."""
+    uid, out, seen = uc.get("id", "?"), [], set()
+    listed = set(uc.get("components") or [])
+    for step in uc_steps(uc):
+        for end in (step.get("from"), step.get("to")):
+            comp = registry.get(end) if isinstance(end, str) else None
+            if not comp or comp.get("kind") not in INFRA_KINDS or end in seen:
+                continue
+            in_diagram = diagram_text is None or str(comp.get("name", "")) in diagram_text
+            if end not in listed or not in_diagram:
+                seen.add(end)
+                out.append(Finding("warning", "infra-participant-missing", f"usecases.json {uid} step {step.get('id', '?')}",
+                                   f"step talks to {end} ({comp.get('kind')}) but it is not a participant in the UC components and diagram. "
+                                   "Add it to components[] and draw it as a lifeline; infra stays in sequence diagrams."))
+    return out
+
+
+def check_step_labels(uc):
+    out = []
+    for step in uc_steps(uc):
+        label, where = step.get("label"), f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}"
+        label = label if isinstance(label, str) else ""
+        if not TAG_RE.match(label):
+            out.append(Finding("warning", "label-format", where,
+                               f"label '{label}' must start with one tag of {', '.join('[%s]' % t for t in LABEL_TAGS)} then a short action, e.g. '[REST] Fetch latest status'."))
+        if any(rx.search(label) for rx in DETAIL_RES):
+            out.append(Finding("warning", "label-too-detailed", where,
+                               f"label '{label}' has an HTTP method, URL path or SQL. Say what the step does ('[REST] Fetch latest status'); put the detail in the UC details diagram."))
+    return out
+
+
+def check_call_sites(uc, repo_root):
+    """Each step of a code/mixed UC needs call 'path:line' pointing at a real source line. Draft UCs are exempt; repo_root None skips existence."""
+    if uc.get("source") not in CODE_SOURCES:
+        return []
+    out = []
+    for step in uc_steps(uc):
+        where, call = f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}", step.get("call")
+        match = CALL_RE.match(call) if isinstance(call, str) else None
+        if not match:
+            out.append(Finding("warning", "arrow-no-callsite", where,
+                               f"{uc.get('source')} UC needs call: \"path:line\" (the code that makes this arrow). Add it, or mark the UC source 'draft' if the code is not written yet."))
+            continue
+        rel, line = match.group(1), int(match.group(2))
+        if rel.lower().endswith(".md"):
+            out.append(Finding("warning", "callsite-missing", where, f"call {call} points at a doc. Docs are not a valid source; point at code."))
+        elif repo_root is not None:
+            target = (repo_root / rel).resolve()
+            inside = repo_root.resolve() in target.parents
+            if not (inside and target.is_file()):
+                out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} does not exist under {repo_root}. Fix the path."))
+            elif line < 1 or line > len(target.read_text(encoding="utf-8", errors="replace").splitlines()):
+                out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} has fewer than {line} lines. Fix the line number."))
+    return out
+
+
+def repo_root_of(artifact_dir):
+    """Parent of docs/artifact, or None when the folder is not laid out that way."""
+    root = Path(artifact_dir).resolve()
+    return root.parent.parent if root.parent.name == "docs" else None
+
+
+def check_big_project(project):
+    registry, repo_root, out = string_ids(project.components), repo_root_of(project.root), []
+    for uc in project.ucs:
+        diagram_text = None
+        if uc.get("diagram"):
+            clean, _ = read_diagram(project.root, uc["diagram"])
+            diagram_text = html.unescape(re.sub(r"<[^>]+>", "\u0000", clean)) if clean else None
+        out += (check_uc_size(uc) + check_infra_participants(uc, registry, diagram_text)
+                + check_step_labels(uc) + check_call_sites(uc, repo_root))
+    return out
+
+
 def check_decisions(project):
     known, out = known_ids(project), check_ids("decisions.json", project.decision_list, "decision")
     for dec in project.decision_list:
@@ -722,6 +832,7 @@ VALIDATION_STEPS = [
     ("registry.json", check_registry),
     ("usecases.json", check_usecases),
     ("usecases.json step_changes", check_step_changes),
+    ("usecases.json steps", check_big_project),
     ("decisions.json", check_decisions),
     ("concepts.json", check_concepts),
     ("artifacts.json", check_artifacts),

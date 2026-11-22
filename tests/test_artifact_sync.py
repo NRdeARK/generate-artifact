@@ -1779,6 +1779,88 @@ class StepChangeTests(FixtureCase):
             self.assertIn(needle, solution)
         self.assertIn("step_changes", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
 
+class BigProjectCheckTests(FixtureCase):
+    """New validate checks: UC size, infra participants, arrow labels, call sites. Each code: one silent case, one firing case."""
+
+    def setUp(self):
+        super().setUp()
+        self.proj = self.tmp / "proj"  # repo layout: <root>/docs/artifact, so call sites resolve against <root>
+        shutil.copytree(FIXTURE.parent.parent, self.proj, ignore=shutil.ignore_patterns("build"))
+        self.dir = self.proj / "docs" / "artifact"
+
+    def edit_uc(self, uid, change):
+        self.edit("usecases.json", lambda d: change(next(u for u in d["ucs"] if u["id"] == uid)))
+
+    def found(self, code):
+        return code in self.codes()[1]
+
+    def test_sample_project_has_none_of_the_new_codes(self):
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(found & {"uc-too-large", "infra-participant-missing", "label-format", "label-too-detailed",
+                                  "arrow-no-callsite", "callsite-missing"}, out)
+
+    def test_uc_too_large_fires_on_13_steps_and_7_participants(self):
+        self.edit_uc("UC-01", lambda u: u.update(steps=[{"id": str(i), "label": "[CALL] Do it"} for i in range(12)]))
+        self.assertFalse(self.found("uc-too-large"))  # exactly 12 is fine
+        self.edit_uc("UC-01", lambda u: u["steps"].append({"id": "13", "label": "[CALL] Do it"}))
+        self.assertTrue(self.found("uc-too-large"))
+        self.assertIn("Split it into smaller UCs", self.codes()[2])
+
+    def test_uc_too_large_fires_on_7_participants(self):
+        self.edit_uc("UC-02", lambda u: u.update(components=["CMP-WEB", "CMP-API", "CMP-QUEUE", "CMP-AGG", "CMP-DB", "CMP-EMAIL"]))
+        self.assertFalse(self.found("uc-too-large"))  # 6 is fine
+        self.edit_uc("UC-02", lambda u: u["components"].append("CMP-SYS"))
+        self.assertTrue(self.found("uc-too-large"))
+
+    def test_infra_participant_missing_fires_when_db_is_left_out(self):
+        self.assertFalse(self.found("infra-participant-missing"))
+        self.edit_uc("UC-03", lambda u: u.update(components=["CMP-CRON", "CMP-AGG"]))  # steps still talk to CMP-DB
+        code, found, out = self.codes()
+        self.assertIn("infra-participant-missing", found)
+        self.assertIn("CMP-DB", out)
+
+    def test_infra_participant_missing_fires_when_diagram_drops_the_lifeline(self):
+        svg = self.dir / "diagrams" / "uc-03.svg"
+        svg.write_text(svg.read_text(encoding="utf-8").replace("Projects DB", "Store"), encoding="utf-8")
+        self.assertTrue(self.found("infra-participant-missing"))
+
+    def test_label_format_needs_a_known_tag_then_an_action(self):
+        self.assertFalse(self.found("label-format"))
+        for bad in ("Fetch status", "[HTTP] Fetch status", "[REST]", "REST Fetch status"):
+            self.edit_uc("UC-02", lambda u, bad=bad: u["steps"][0].update(label=bad))
+            self.assertTrue(self.found("label-format"), bad)
+
+    def test_label_too_detailed_flags_method_path_and_sql(self):
+        self.assertFalse(self.found("label-too-detailed"))
+        for bad in ("[REST] GET status", "[REST] Fetch /api/status", "[SQL] SELECT id FROM status",
+                    "[SQL] UPDATE status SET x = 1", "[SQL] DELETE FROM status"):
+            self.edit_uc("UC-02", lambda u, bad=bad: u["steps"][0].update(label=bad))
+            self.assertTrue(self.found("label-too-detailed"), bad)
+
+    def test_arrow_no_callsite_fires_for_code_and_mixed_but_not_draft(self):
+        self.edit_uc("UC-02", lambda u: u["steps"][0].pop("call", None))  # UC-02 is draft: exempt
+        self.assertFalse(self.found("arrow-no-callsite"))
+        self.edit_uc("UC-01", lambda u: u["steps"][0].pop("call"))  # mixed
+        self.assertTrue(self.found("arrow-no-callsite"))
+        self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/api/projects.ts:2"))
+        self.edit_uc("UC-03", lambda u: u["steps"][0].pop("call"))  # code
+        self.assertTrue(self.found("arrow-no-callsite"))
+
+    def test_callsite_missing_for_missing_file_late_line_and_docs(self):
+        self.assertFalse(self.found("callsite-missing"))
+        for bad in ("web/src/nope.ts:1", "web/src/api/projects.ts:999", "../outside.ts:1", "docs/artifact/intent.md:1"):
+            self.edit_uc("UC-01", lambda u, bad=bad: u["steps"][0].update(call=bad))
+            self.assertTrue(self.found("callsite-missing"), bad)
+
+    def test_callsite_check_is_skipped_when_repo_root_is_unknown(self):
+        loose = self.tmp / "loose"  # not under docs/, so no repo root
+        shutil.copytree(self.dir, loose)
+        self.dir = loose
+        self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/nope.ts:1"))
+        self.assertFalse(self.found("callsite-missing"))
+
+
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):
         offenders = []

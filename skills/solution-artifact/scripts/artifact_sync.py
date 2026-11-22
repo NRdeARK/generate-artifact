@@ -648,19 +648,22 @@ def parse_uc_diagram(clean_svg):
 
 def check_uc_size(uc, svg_steps=None):
     uid, out = uc.get("id", "?"), []
-    by_flow, declared_ids = {}, set()
+    by_flow, svg_by_flow, declared_ids = {}, {}, set()
     for step in uc_steps(uc):
         flow = step.get("flow")
         by_flow.setdefault(flow if isinstance(flow, str) and flow else "good", []).append(step)
         if isinstance(step.get("id"), str) and step.get("id"):
             declared_ids.add(step["id"])
     for sid, (flow, _) in (svg_steps or {}).items():
+        flow = flow or "good"
+        svg_by_flow.setdefault(flow, []).append(sid)
         if sid not in declared_ids:
-            by_flow.setdefault(flow or "good", []).append({"id": sid})
-    for flow, steps in by_flow.items():
-        if len(steps) > MAX_STEPS:
+            by_flow.setdefault(flow, []).append({"id": sid})
+    for flow in list(by_flow) + [f for f in svg_by_flow if f not in by_flow]:
+        count = max(len(by_flow.get(flow, ())), len(svg_by_flow.get(flow, ())))
+        if count > MAX_STEPS:
             out.append(Finding("warning", "uc-too-large", f"usecases.json {uid} flow {flow}",
-                               f"{len(steps)} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
+                               f"{count} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
     parts = uc.get("components") if isinstance(uc.get("components"), list) else []
     if len(parts) > MAX_PARTICIPANTS:
         out.append(Finding("warning", "uc-too-large", f"usecases.json {uid}",
@@ -677,7 +680,7 @@ def check_steps_required(uc):
 
 
 def check_diagram_steps(uc, svg_steps):
-    """Every arrow drawn in the UC SVG must be declared in steps[], and vice versa."""
+    """Every arrow drawn in the UC SVG must be declared in steps[] in the same flow, and vice versa."""
     if svg_steps is None:
         return []
     uid, diag, out = uc.get("id", "?"), uc.get("diagram", "diagram"), []
@@ -688,9 +691,18 @@ def check_diagram_steps(uc, svg_steps):
                                f"{diag} draws step '{sid}' but it is not listed in steps[]. Declare every arrow in steps[]."))
     for step in uc_steps(uc):
         sid = step.get("id")
-        if isinstance(sid, str) and sid and sid not in svg_steps:
+        if not (isinstance(sid, str) and sid):
+            continue
+        if sid not in svg_steps:
             out.append(Finding("warning", "step-not-in-diagram", f"usecases.json {uid} step {sid}",
                                f"steps[] lists '{sid}' but {diag} has no data-step=\"{sid}\". Add the arrow to the diagram or remove it from steps[]."))
+        else:
+            raw_flow = step.get("flow")
+            declared_flow = raw_flow if isinstance(raw_flow, str) and raw_flow else "good"
+            svg_flow = svg_steps[sid][0] or "good"
+            if declared_flow != svg_flow:
+                out.append(Finding("warning", "step-flow-mismatch", f"usecases.json {uid} step {sid}",
+                                   f"steps[] puts '{sid}' in flow '{declared_flow}' but {diag} draws it in '{svg_flow}'. Match the step flow to its diagram fragment."))
     return out
 
 

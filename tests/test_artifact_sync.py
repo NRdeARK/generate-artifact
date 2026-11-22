@@ -2206,8 +2206,9 @@ class BigProjectCheckTests(FixtureCase):
     def test_sample_project_has_none_of_the_new_codes(self):
         code, found, out = self.codes()
         self.assertEqual(code, 0, out)
-        self.assertFalse(found & {"uc-too-large", "step-undeclared", "step-not-in-diagram", "infra-participant-missing",
-                                  "label-format", "label-too-detailed", "arrow-no-callsite", "callsite-missing"}, out)
+        self.assertFalse(found & {"uc-too-large", "step-undeclared", "step-not-in-diagram", "step-flow-mismatch",
+                                  "infra-participant-missing", "label-format", "label-too-detailed",
+                                  "arrow-no-callsite", "callsite-missing"}, out)
 
     def test_uc_too_large_fires_on_13_steps_and_7_participants(self):
         self.edit_uc("UC-01", lambda u: u.update(steps=[{"id": str(i), "label": "[CALL] Do it"} for i in range(12)]))
@@ -2304,6 +2305,17 @@ class BigProjectCheckTests(FixtureCase):
         self.assertNotEqual(raw, updated)
         svg.write_text(updated, encoding="utf-8")
         self.assertTrue(self.found("infra-participant-missing"))
+
+    def test_declared_flow_mismatch_cannot_hide_oversized_svg_flow(self):
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+               + "".join(f'<g data-step="{i}"><text>{i} [CALL] Work</text></g>' for i in range(1, 14))
+               + "</svg>")
+        (self.dir / "diagrams" / "uc-02.svg").write_text(svg, encoding="utf-8")
+        steps = [{"id": str(i), "label": "[CALL] Work", "flow": "bad-timeout" if i == 13 else "good"} for i in range(1, 14)]
+        self.edit_uc("UC-02", lambda u: u.update(steps=steps))
+        _, found, out = self.codes()
+        self.assertIn("uc-too-large", found, out)
+        self.assertIn("step-flow-mismatch", found, out)
 
     def test_callsite_oversized_line_and_unreadable_source_report_finding_without_crashing(self):
         from unittest.mock import patch

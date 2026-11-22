@@ -6,7 +6,9 @@ import re
 import shutil
 import sys
 import tempfile
+import subprocess
 import unittest
+from unittest import mock
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -372,6 +374,8 @@ class ExportLanguageTests(FixtureCase):
         document = (self.build_dir() / "artifact-print-th.html").read_text(encoding="utf-8")
         self.assertIn('<html lang="th"', document)
         self.assertRegex(document, "[ก-๛]{3}")
+        th_title = json.loads((self.dir / "i18n" / "th.json").read_text(encoding="utf-8"))["D1"]["text"]["title"]
+        self.assertIn(th_title, re.sub(r"<script.*?</script>", "", document, flags=re.S), "Thai is in the visible markup, not only embedded data")
         self.assertIn('url("fonts/ibm-plex-sans-thai-400.woff2")', document)
         for font in re.findall(r'url\("(fonts/[^"]+)"\)', document):
             self.assertTrue((self.build_dir() / font).is_file(), font)
@@ -392,6 +396,110 @@ class ExportLanguageTests(FixtureCase):
             self.assertRegex(logs.output[0], r"Thai PDF refused.*C1.*(i18n-diff|translate)")
             self.assertFalse(self.build_dir().exists())
         self.assertEqual(run("export-pdf", str(self.dir), "--lang", "en")[0], 0, "English still exports")
+
+
+class BlankThaiTests(FixtureCase):
+    """A Thai value that is blank, null or the wrong type counts as missing everywhere (th_status is shared)."""
+    BLANKS = ("", "   ", None, 7, [])
+
+    def blank_c1(self, value):
+        def edit(d):
+            path = next(iter(d["C1"]["text"]))
+            d["C1"]["text"][path] = value
+        self.edit("i18n/th.json", edit)
+
+    def test_blank_values_are_missing_in_validate_and_i18n_diff(self):
+        for value in self.BLANKS:
+            with self.subTest(value=value):
+                self.blank_c1(value)
+                self.assertIn("th-missing", self.codes()[1])
+                entries = {e["key"]: e["status"] for e in json.loads(run("i18n-diff", str(self.dir))[1])}
+                self.assertEqual(entries.get("C1"), "missing")
+
+    def test_blank_values_block_th_and_both_before_any_output_is_written(self):
+        for value in self.BLANKS:
+            for lang in ("th", "both"):
+                with self.subTest(value=value, lang=lang), self.assertLogs(sync.log, "ERROR") as logs:
+                    self.blank_c1(value)
+                    self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang, "--dry-run")[0], 1)
+                    self.assertRegex(logs.output[0], r"Thai PDF refused.*C1")
+        self.assertFalse((self.dir / "build").exists())
+
+    def test_thai_entry_that_is_not_an_object_is_missing(self):
+        self.edit("i18n/th.json", lambda d: d.update(C1="oops"))
+        self.assertIn("th-missing", self.codes()[1])
+
+    def test_blank_english_field_needs_no_thai(self):
+        self.edit("concepts.json", lambda d: d["concepts"][0].update(summary=""))
+        self.edit("i18n/th.json", lambda d: d["C1"]["text"].pop("summary", None))
+        entries = {e["key"]: e["status"] for e in json.loads(run("i18n-diff", str(self.dir))[1])}
+        self.assertNotEqual(entries.get("C1"), "missing")
+
+
+class PdfConversionTests(FixtureCase):
+    """The PDF is written aside and moved into place only after a successful conversion."""
+    def export(self, fake_run, lang="en"):
+        real_run = subprocess.run
+
+        def only_browser(cmd, **kw):  # git calls made while rendering stay real
+            return fake_run(cmd, **kw) if cmd[0] == "browser" else real_run(cmd, **kw)
+        with mock.patch.object(sync, "find_browser", return_value="browser"), mock.patch.object(sync.subprocess, "run", only_browser):
+            return run("export-pdf", str(self.dir), "--lang", lang)[0]
+
+    @staticmethod
+    def ok_run(cmd, **kw):
+        target = next(a for a in cmd if a.startswith("--print-to-pdf=")).split("=", 1)[1]
+        Path(target).write_bytes(b"%PDF-new")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    @staticmethod
+    def failing_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "boom")
+
+    @staticmethod
+    def timeout_run(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 120)
+
+    def old_pdf(self, lang="en"):
+        (self.dir / "build").mkdir(exist_ok=True)
+        path = self.dir / "build" / f"artifact-{lang}.pdf"
+        path.write_bytes(b"%PDF-old")
+        return path
+
+    def test_success_replaces_the_old_pdf_and_leaves_no_temp_file(self):
+        pdf = self.old_pdf()
+        self.assertEqual(self.export(self.ok_run), 0)
+        self.assertEqual(pdf.read_bytes(), b"%PDF-new")
+        self.assertEqual(list((self.dir / "build").glob("*.tmp")), [])
+
+    def test_failed_conversion_is_an_error_and_keeps_the_old_pdf(self):
+        pdf = self.old_pdf()
+        with self.assertLogs(sync.log, "ERROR") as logs:
+            self.assertEqual(self.export(self.failing_run), 1)
+        self.assertRegex("\n".join(logs.output), r"PDF conversion failed \(exit 1: boom\)")
+        self.assertEqual(pdf.read_bytes(), b"%PDF-old")
+
+    def test_timeout_is_reported_not_raised(self):
+        self.old_pdf()
+        with self.assertLogs(sync.log, "ERROR") as logs:
+            self.assertEqual(self.export(self.timeout_run), 1)
+        self.assertIn("timed out", "\n".join(logs.output))
+
+    def test_exit_zero_without_output_is_a_failure(self):
+        with self.assertLogs(sync.log, "ERROR"):
+            self.assertEqual(self.export(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")), 1)
+
+    def test_both_second_failure_does_not_count_the_old_file_as_success(self):
+        old_th = self.old_pdf("th")
+        calls = []
+
+        def run_once(cmd, **kw):
+            calls.append(cmd)
+            return self.ok_run(cmd) if len(calls) == 1 else self.failing_run(cmd)
+        with self.assertLogs(sync.log, "ERROR"):
+            self.assertEqual(self.export(run_once, "both"), 1)
+        self.assertEqual((self.dir / "build" / "artifact-en.pdf").read_bytes(), b"%PDF-new")
+        self.assertEqual(old_th.read_bytes(), b"%PDF-old")
 
 
 class I18nTests(FixtureCase):
@@ -2198,7 +2306,13 @@ class ProgressAndStepsTests(FixtureCase):
         self.assertIn("th-missing", self.codes()[1])
         self.edit("decisions.json", lambda d: d["decisions"][0].update(title="Changed title"))
         self.edit("i18n/th.json", lambda d: d.update(D1={"source_hash": "old", "text": {"title": "x"}}))
-        self.assertTrue({"th-stale", "th-missing"} & self.codes()[1])
+        self.assertIn("th-missing", self.codes()[1], "incomplete text is missing, not stale")
+
+    def test_complete_text_with_an_old_hash_is_stale_not_missing(self):
+        self.edit("i18n/th.json", lambda d: d["D1"].update(source_hash="old"))
+        found = self.codes()[1]
+        self.assertIn("th-stale", found)
+        self.assertNotIn("th-missing", found)
 
     def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):
         self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-02"])  # draft

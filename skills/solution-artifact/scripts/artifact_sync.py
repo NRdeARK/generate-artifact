@@ -211,12 +211,19 @@ def source_hash(text):
     return hashlib.sha1(json.dumps(text, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
 
 
+def th_usable(value):
+    """A Thai value counts only if it is a non-blank string."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 def th_status(project):
-    """[(key, 'missing'|'stale', english_text)] for entries whose Thai is absent or out of date."""
+    """[(key, 'missing'|'stale', english_text)] for entries whose Thai is absent, blank, or out of date.
+    Blank English fields need no Thai."""
     result = []
     for key, text in content_entries(project).items():
         th = project.th.get(key)
-        if th is None or any(path not in th.get("text", {}) for path in text):
+        th_text = th.get("text") if isinstance(th, dict) else None
+        if not isinstance(th_text, dict) or any(en.strip() and not th_usable(th_text.get(path)) for path, en in text.items()):
             result.append((key, "missing", text))
         elif th.get("source_hash") != source_hash(text):
             result.append((key, "stale", text))
@@ -1615,13 +1622,21 @@ def export_pdf_for(project, args, lang, summary):
         log.warning("no Edge/Chrome found. Open %s in a browser and print to PDF (enable background graphics).", html_path)
         summary.skipped += 1
         return True
-    done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()],
-                          capture_output=True, text=True, timeout=120)
-    if pdf_path.is_file():
+    tmp_pdf = pdf_path.with_name(pdf_path.name + ".tmp")  # convert aside so a failure never leaves or reports an old PDF
+    tmp_pdf.unlink(missing_ok=True)
+    try:
+        done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={tmp_pdf}", html_path.resolve().as_uri()],
+                              capture_output=True, text=True, timeout=120)
+        error = "" if done.returncode == 0 and tmp_pdf.is_file() and tmp_pdf.stat().st_size > 0 else f"exit {done.returncode}: {done.stderr.strip()[-200:]}"
+    except subprocess.TimeoutExpired:
+        error = "timed out after 120 s"
+    if not error:
+        tmp_pdf.replace(pdf_path)
         log.info("wrote  %s (%d bytes)", pdf_path, pdf_path.stat().st_size)
         summary.succeeded += 1
         return True
-    log.error("PDF conversion failed (exit %s): %s. Open %s and print to PDF instead.", done.returncode, done.stderr.strip()[-200:], html_path)
+    tmp_pdf.unlink(missing_ok=True)
+    log.error("PDF conversion failed (%s), %s kept as before. Open %s and print to PDF instead.", error, pdf_path.name, html_path)
     summary.failed += 1
     return False
 

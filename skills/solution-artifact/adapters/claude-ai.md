@@ -27,3 +27,4 @@ Call `guide` with `intent: "slides" | "design" | "other"`. If it names a type, u
 - Delete an artifact unless the user asks (`delete_artifact`; the user confirms).
 - Publish a file you have not read, or a page that impersonates a real person, company or brand.
 - Touch old per-tab artifacts listed under `tabs`: tell the user they were left as-is and can be deleted manually.
+- **PDF:** `export-pdf <dir> --lang en|th|both --fonts google` (Google Fonts, needs network in the headless browser; falls back to system fonts offline). Ask the user which language first.

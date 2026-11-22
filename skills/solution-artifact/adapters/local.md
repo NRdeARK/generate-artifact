@@ -11,3 +11,4 @@ No hosting. The rendered file stays on disk.
 - **Record:** `"adapter": "local"`, `"publish": {"local": {"id": "build/index.html", "url": "<file:// URI>"}}`.
 - **Open it:** `python scripts/artifact_sync.py open <dir>` also starts the default browser.
 - **Sharing:** the file is yours to copy or send; it contains Tab 4 and Tab 5 code details, so check for secrets and internal hostnames first.
+- **PDF:** `export-pdf <dir> --lang en|th|both --fonts local` (default; works offline, so prefer it for Thai PDFs). Ask the user which language first.

@@ -1820,6 +1820,15 @@ class BigProjectCheckTests(FixtureCase):
         self.assertIn("infra-participant-missing", found)
         self.assertIn("CMP-DB", out)
 
+    def test_malformed_flow_components_and_call_do_not_crash_or_hide_other_ucs(self):
+        self.edit_uc("UC-01", lambda u: u.update(source="code", components=[["x"]],
+                                                 steps=[{"id": "1", "label": "[CALL] Do it", "flow": [], "call": "a\u0000b:1"}]))
+        self.edit_uc("UC-02", lambda u: u.update(steps=[{"id": "1", "label": "Bad label"}]))
+        code, found, out = self.codes()
+        self.assertNotIn("bad-shape", found, out)
+        self.assertIn("callsite-missing", found)
+        self.assertIn("label-format", found)  # UC-02 still checked after UC-01 was malformed
+
     def test_infra_participant_missing_fires_when_diagram_drops_the_lifeline(self):
         svg = self.dir / "diagrams" / "uc-03.svg"
         svg.write_text(svg.read_text(encoding="utf-8").replace("Projects DB", "Store"), encoding="utf-8")

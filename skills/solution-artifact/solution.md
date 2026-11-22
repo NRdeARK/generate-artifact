@@ -25,7 +25,7 @@ One large, living document that runs from design to finish. Input: the **approve
 ## Tab 1 — Use cases & coverage
 1. **Recap from intent**: before state and the issues/problems (pulled from the intent artifact, not re-written).
 2. **Outcome success → use cases**: a full-width outcome banner, then a tree diagram (`diagrams/uc-tree.svg`: Outcome → Main UCs → Affected UCs, each Affected edge labelled with the causing component), then one compact table (ID, Tier, plain-words summary, traced from, link to Tab 4). The table replaces any separate list of Affected UCs.
-3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it. Keep each UC small: max 12 steps and 6 participants per flow; split bigger ones into separate UCs before drawing (see Tab 4).
+3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it. Keep each UC small: max 12 steps per flow and 6 participants per UC diagram; split bigger ones into separate UCs before drawing (see Tab 4).
 4. **CRUD lifecycle check**: a matrix of **entity/component × Create / Read / Update / Delete**. Each cell maps to a UC or is explicitly marked "not needed (why)". Gaps get flagged so no lifecycle is half-built.
 5. Before/after overview diagram using registry components.
 

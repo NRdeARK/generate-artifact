@@ -594,12 +594,13 @@ def check_uc_size(uc):
     uid, out = uc.get("id", "?"), []
     by_flow = {}
     for step in uc_steps(uc):
-        by_flow.setdefault(step.get("flow") or "good", []).append(step)
+        flow = step.get("flow")
+        by_flow.setdefault(flow if isinstance(flow, str) and flow else "good", []).append(step)
     for flow, steps in by_flow.items():
         if len(steps) > MAX_STEPS:
             out.append(Finding("warning", "uc-too-large", f"usecases.json {uid} flow {flow}",
                                f"{len(steps)} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
-    parts = uc.get("components") or []
+    parts = uc.get("components") if isinstance(uc.get("components"), list) else []
     if len(parts) > MAX_PARTICIPANTS:
         out.append(Finding("warning", "uc-too-large", f"usecases.json {uid}",
                            f"{len(parts)} participants (max {MAX_PARTICIPANTS}). Split it into smaller UCs, then redraw each diagram."))
@@ -609,7 +610,7 @@ def check_uc_size(uc):
 def check_infra_participants(uc, registry, diagram_text=None):
     """Steps that talk to a db/store/queue/cache/external component must keep it in the UC's participants and diagram."""
     uid, out, seen = uc.get("id", "?"), [], set()
-    listed = set(uc.get("components") or [])
+    listed = {c for c in (uc.get("components") if isinstance(uc.get("components"), list) else []) if isinstance(c, str)}
     for step in uc_steps(uc):
         for end in (step.get("from"), step.get("to")):
             comp = registry.get(end) if isinstance(end, str) else None
@@ -654,9 +655,13 @@ def check_call_sites(uc, repo_root):
         if rel.lower().endswith(".md"):
             out.append(Finding("warning", "callsite-missing", where, f"call {call} points at a doc. Docs are not a valid source; point at code."))
         elif repo_root is not None:
-            target = (repo_root / rel).resolve()
-            inside = repo_root.resolve() in target.parents
-            if not (inside and target.is_file()):
+            try:
+                target = (repo_root / rel).resolve()
+                inside = repo_root.resolve() in target.parents
+                exists = inside and target.is_file()
+            except (ValueError, OSError):
+                exists = False  # e.g. NUL byte or over-long path in call
+            if not exists:
                 out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} does not exist under {repo_root}. Fix the path."))
             elif line < 1 or line > len(target.read_text(encoding="utf-8", errors="replace").splitlines()):
                 out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} has fewer than {line} lines. Fix the line number."))

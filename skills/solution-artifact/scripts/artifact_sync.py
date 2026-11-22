@@ -1153,6 +1153,7 @@ class Site:
         self.ucs = string_ids(project.ucs)
         self.present = present_tabs(project.root)
         self.svg_ids = set()
+        self.svg_copy = 0
         self.parts = {}
         self._load_parts("_parts.html")
 
@@ -1249,19 +1250,26 @@ class Site:
         return self.part("diagram", svg=svg, maxw=width or 1200, expand=expand)
 
     def unique_ids(self, svg):
-        """All sections share one document, so a diagram used twice (e.g. Tab 1 and Tab 5 overviews) must not repeat ids:
-        markers and aria references would resolve into a hidden copy. Later copies get a numeric suffix, references included."""
-        ids = re.findall(r'\sid="([^"]+)"', svg)
+        """All sections share one document, so a diagram used more than once (e.g. Tab 1 and Tab 5 overviews) must not repeat ids:
+        markers and aria references would resolve into a hidden copy. Later copies get a unique numeric suffix, references included."""
+        ids = list(dict.fromkeys(re.findall(r'\sid="([^"]+)"', svg)))
         repeated = [i for i in ids if i in self.svg_ids]
-        self.svg_ids.update(ids)
         if not repeated:
+            self.svg_ids.update(ids)
             return svg
-        suffix = f"-{len(self.svg_ids)}"
-        for ident in repeated:
-            svg = re.sub(rf'(\sid="{re.escape(ident)}")', lambda m: m.group(1)[:-1] + suffix + '"', svg)
-            svg = svg.replace(f"url(#{ident})", f"url(#{ident}{suffix})").replace(f'href="#{ident}"', f'href="#{ident}{suffix}"')
-            svg = re.sub(r'(aria-(?:labelledby|describedby)=")([^"]*)"',
-                         lambda m: m.group(1) + " ".join(t + suffix if t == ident else t for t in m.group(2).split()) + '"', svg)
+        all_ids = set(ids) | self.svg_ids
+        self.svg_copy += 1
+        while any(f"{ident}-{self.svg_copy}" in all_ids for ident in repeated):
+            self.svg_copy += 1
+        suffix = f"-{self.svg_copy}"
+        mapping = {ident: f"{ident}{suffix}" for ident in repeated}
+        self.svg_ids.update(ids)
+        self.svg_ids.update(mapping.values())
+        svg = re.sub(r'(\sid=")([^"]+)"', lambda m: m.group(1) + mapping.get(m.group(2), m.group(2)) + '"', svg)
+        svg = re.sub(r'url\(#([^)]+)\)', lambda m: f"url(#{mapping.get(m.group(1), m.group(1))})", svg)
+        svg = re.sub(r'(\bhref="#)([^"]+)"', lambda m: m.group(1) + mapping.get(m.group(2), m.group(2)) + '"', svg)
+        svg = re.sub(r'(aria-(?:labelledby|describedby)=")([^"]*)"',
+                     lambda m: m.group(1) + " ".join(mapping.get(t, t) for t in m.group(2).split()) + '"', svg)
         return svg
 
     def dictionary(self, cid, change):

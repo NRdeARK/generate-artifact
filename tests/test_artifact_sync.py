@@ -320,6 +320,29 @@ class RenderTests(FixtureCase):
         self.assertIn(f'id="arch-L2-after-title-{suffix}"', text)
         self.assertRegex(text, rf'aria-labelledby="arch-L2-after-title-{suffix}[ "]')
 
+    def test_reused_diagram_three_times_keeps_all_ids_unique(self):
+        self.edit("concepts.json", lambda d: [c.update(diagram="diagrams/arch-L2-after.svg") for c in d["concepts"]])
+        text = self.build()
+        ids = re.findall(r'\sid="([^"]+)"', text)
+        self.assertEqual(sorted({i for i in ids if ids.count(i) > 1}), [])
+        copies = re.findall(r'id="(arch-L2-after(?:-\d+)?)"', text)
+        self.assertGreaterEqual(len(copies), 3)
+        self.assertEqual(len(copies), len(set(copies)))
+        for copy_id in copies:
+            suffix = copy_id.removeprefix("arch-L2-after")
+            self.assertIn(f'id="arch-L2-after-title{suffix}"', text)
+            self.assertRegex(text, rf'aria-labelledby="arch-L2-after-title{re.escape(suffix)}[ "]')
+        site = sync.Site(sync.load_project(self.dir))
+        sample = '<svg id="d" aria-labelledby="t"><title id="t">T</title><defs><marker id="m"/><marker id="m-1"/></defs><line marker-end="url(#m)"/><use href="#m-1"/></svg>'
+        rendered = [site.unique_ids(sample) for _ in range(3)]
+        all_ids = re.findall(r'\sid="([^"]+)"', "".join(rendered))
+        self.assertEqual(sorted({i for i in all_ids if all_ids.count(i) > 1}), [])
+        for chunk in rendered:
+            mid = re.search(r'<marker id="(m(?:-\d+)?)"', chunk).group(1)
+            m1id = re.search(r'<marker id="(m-1(?:-\d+)?)"', chunk).group(1)
+            self.assertIn(f'marker-end="url(#{mid})"', chunk)
+            self.assertIn(f'href="#{m1id}"', chunk)
+
     def test_html_escapes_content(self):
         self.edit("concepts.json", lambda d: d["concepts"][0].update(title="<script>alert(1)</script>"))
         text = self.build()

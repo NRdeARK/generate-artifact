@@ -989,7 +989,7 @@ def check_diagrams(project):
     return out
 
 def check_translations(project):
-    out = [Finding("warning", f"th-{status}", f"i18n/th.json {key}",
+    out = [Finding("error", f"th-{status}", f"i18n/th.json {key}",
                    "no Thai entry or fields missing. Run i18n-diff and translate." if status == "missing"
                    else "English changed since this Thai text was written. Re-translate.")
            for key, status, _ in th_status(project)]

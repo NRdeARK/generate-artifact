@@ -97,7 +97,7 @@ Per UC (Main first, then Affected):
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
 - **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
-- The sync script flags any entry whose TH translation is missing or stale. `validate` warns (`th-missing`, `th-stale`) until every string has a current Thai entry. If a string is still untranslated the page falls back to English, but published pages should be complete. The PDF export (`--lang en|th|both`) refuses Thai while entries are missing.
+- The sync script flags any entry whose TH translation is missing or stale. `validate` fails (`th-missing`, `th-stale` errors) until every string has a current Thai entry (`th-orphan` warns on unused entries). If a string is still untranslated the page falls back to English, but published pages should be complete. The PDF export (`--lang en|th|both`) refuses Thai while entries are missing.
 
 ## Versioning = git (decided 2026-11-15)
 - These are personal work docs, so **git is the history**. There's no hand-maintained changelog and no per-item "changed in vX" markers.

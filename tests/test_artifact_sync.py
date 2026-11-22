@@ -90,6 +90,10 @@ class FixtureCase(unittest.TestCase):
         change(data)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def sync_th(self, *keys):
+        entries = sync.content_entries(sync.load_project(self.dir))
+        self.edit("i18n/th.json", lambda d: [d[k].update(source_hash=sync.source_hash(entries[k])) for k in keys])
+
     def codes(self):
         code, out = run("validate", str(self.dir))
         return code, set(re.findall(r"\[(?:ERROR|WARNING|INFO)\] (\S+)", out)), out
@@ -120,16 +124,27 @@ class ValidateTests(FixtureCase):
         self.assertEqual(code, 1)
         self.assertIn("crud-gap", codes)
 
-    def test_stale_thai_is_flagged_and_strict_fails(self):
+    def test_stale_thai_is_an_error(self):
         self.edit("usecases.json", lambda d: d["ucs"][0].update(summary="Changed English text."))
-        code, codes, _ = self.codes()
+        code, codes, out = self.codes()
         self.assertIn("th-stale", codes)
-        self.assertEqual(code, 0, "stale Thai is a warning by default")
-        self.assertEqual(run("validate", str(self.dir), "--strict")[0], 1)
+        self.assertIn("[ERROR] th-stale", out)
+        self.assertEqual(code, 1, "stale Thai must be an error")
 
-    def test_missing_thai_entry(self):
+    def test_missing_thai_entry_is_an_error(self):
         self.edit("i18n/th.json", lambda d: d.pop("UC-02"))
-        self.assertIn("th-missing", self.codes()[1])
+        code, codes, out = self.codes()
+        self.assertIn("th-missing", codes)
+        self.assertIn("[ERROR] th-missing", out)
+        self.assertEqual(code, 1, "missing Thai must be an error")
+
+    def test_orphan_thai_entry_is_a_warning_and_strict_fails(self):
+        self.edit("i18n/th.json", lambda d: d.update({"UC-999": {"source_hash": "deadbeef0000", "text": {"title": "เก่า"}}}))
+        code, codes, out = self.codes()
+        self.assertIn("th-orphan", codes)
+        self.assertIn("[WARNING] th-orphan", out)
+        self.assertEqual(code, 0, "orphan Thai stays a warning by default")
+        self.assertEqual(run("validate", str(self.dir), "--strict")[0], 1)
 
     def test_component_change_without_reason_or_uc(self):
         self.edit("registry.json", lambda d: d["components"][-1]["change"].update(why="", ucs=[]))
@@ -438,7 +453,10 @@ class BlankThaiTests(FixtureCase):
         for value in self.BLANKS:
             with self.subTest(value=value):
                 self.blank_c1(value)
-                self.assertIn("th-missing", self.codes()[1])
+                code, found, out = self.codes()
+                self.assertEqual(code, 1, out)
+                self.assertIn("th-missing", found)
+                self.assertIn("[ERROR] th-missing", out)
                 entries = {e["key"]: e["status"] for e in json.loads(run("i18n-diff", str(self.dir))[1])}
                 self.assertEqual(entries.get("C1"), "missing")
 
@@ -453,7 +471,10 @@ class BlankThaiTests(FixtureCase):
 
     def test_thai_entry_that_is_not_an_object_is_missing(self):
         self.edit("i18n/th.json", lambda d: d.update(C1="oops"))
-        self.assertIn("th-missing", self.codes()[1])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1, out)
+        self.assertIn("th-missing", found)
+        self.assertIn("[ERROR] th-missing", out)
 
     def test_blank_english_field_needs_no_thai(self):
         self.edit("concepts.json", lambda d: d["concepts"][0].update(summary=""))
@@ -1228,9 +1249,10 @@ class ComponentDiagramTests(FixtureCase):
             comps["CMP-AGG"]["change"]["diagrams"].pop("before")
             comps["CMP-DB"]["change"]["diagrams"].pop("extra")
         self.edit("registry.json", change)
+        self.sync_th("CMP-WEB")
         code, codes, out = self.codes()
-        self.assertEqual(code, 0)
-        self.assertEqual(codes - {"th-stale"}, {"component-view-missing", "component-extra-missing"})  # removing the flowchart also changes the translated text
+        self.assertEqual(code, 0, out)
+        self.assertEqual(codes, {"component-view-missing", "component-extra-missing"})
         self.assertEqual([line for line in out.splitlines() if "CMP-WEB" in line and "component-" in line], [])
 
     def test_flowchart_needs_title_and_diagram(self):
@@ -1417,8 +1439,9 @@ class ConceptPlainTests(FixtureCase):
 
     def test_missing_plain_is_a_warning_and_side_falls_back_to_the_kind_label(self):
         self.edit("concepts.json", lambda d: d["concepts"][1].pop("plain"))
+        self.sync_th("C2")
         code, codes, out = self.codes()
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 0, out)
         self.assertIn("concept-plain-missing", codes)
         self.assertIn("C2", out)
         side = self.tab3().split('<aside class="side">')[1].split("</aside>")[0]
@@ -1598,8 +1621,9 @@ class DataDictionaryTests(FixtureCase):
             table = next(c for c in d["components"] if c["id"] == "CMP-DB")["change"]["data_dictionary"]["tables"][1]
             table["columns"][2].pop("meaning")
         self.edit("registry.json", change)
+        self.sync_th("CMP-DB")
         code, codes, out = self.codes()
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 0, out)
         self.assertIn("column-meaning-missing", codes)
         self.assertIn("status_history.status", out)
 
@@ -2373,18 +2397,26 @@ class ProgressAndStepsTests(FixtureCase):
         self.assertIn("[INFO]", out)
         self.assertNotIn("[WARNING]", out)
 
-    def test_complete_thai_has_no_th_finding_missing_and_stale_each_warn(self):
+    def test_complete_thai_has_no_th_finding_missing_and_stale_each_error(self):
         self.assertFalse({c for c in self.codes()[1] if c.startswith("th-")})
         self.edit("i18n/th.json", lambda d: d.pop("D1"))
-        self.assertIn("th-missing", self.codes()[1])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1, out)
+        self.assertIn("th-missing", found)
+        self.assertIn("[ERROR] th-missing", out)
         self.edit("decisions.json", lambda d: d["decisions"][0].update(title="Changed title"))
         self.edit("i18n/th.json", lambda d: d.update(D1={"source_hash": "old", "text": {"title": "x"}}))
-        self.assertIn("th-missing", self.codes()[1], "incomplete text is missing, not stale")
+        code, found, out = self.codes()
+        self.assertEqual(code, 1, out)
+        self.assertIn("th-missing", found, "incomplete text is missing, not stale")
+        self.assertIn("[ERROR] th-missing", out)
 
     def test_complete_text_with_an_old_hash_is_stale_not_missing(self):
         self.edit("i18n/th.json", lambda d: d["D1"].update(source_hash="old"))
-        found = self.codes()[1]
+        code, found, out = self.codes()
+        self.assertEqual(code, 1, out)
         self.assertIn("th-stale", found)
+        self.assertIn("[ERROR] th-stale", out)
         self.assertNotIn("th-missing", found)
 
     def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):

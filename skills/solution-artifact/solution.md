@@ -25,7 +25,7 @@ One large, living document that runs from design to finish, rendered as ONE self
 ## Tab 1 — Use cases & coverage
 1. **Recap from intent**: before state and the issues/problems (pulled from the intent artifact, not re-written).
 2. **Outcome success → use cases**: a full-width outcome banner, then a tree diagram (`diagrams/uc-tree.svg`: Outcome → Main UCs → Affected UCs, each Affected edge labelled with the causing component), then one compact table (ID, Tier, plain-words summary, traced from, link to Tab 4). The table replaces any separate list of Affected UCs.
-3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it.
+3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it. Keep each UC small: max 12 steps and 6 participants per flow; split bigger ones into separate UCs before drawing (see Tab 4).
 4. **CRUD lifecycle check**: a matrix of **entity/component × Create / Read / Update / Delete**. Each cell maps to a UC or is explicitly marked "not needed (why)". Gaps get flagged so no lifecycle is half-built.
 5. Before/after overview diagram using registry components.
 
@@ -54,7 +54,10 @@ Per UC (Main first, then Affected):
 - **Sequence diagram** (ONE per UC, inline SVG, text at least 11px):
   - Written **from reading the actual code**, not from existing docs (docs go stale or skip steps).
   - **Every arrow is labelled.** No unlabelled hops through middle components.
-  - Big flows get split: the top level shows the overview, and a step expands into its own **detail sequence diagram** underneath.
+  - **Size limits, split before drawing**: a UC flow has at most **12 steps** and **6 participants**. Over either limit, split it into smaller UCs first (`uc-too-large` warns). A step may still expand into its own **detail sequence diagram** underneath.
+  - **Infra stays in the diagram**: a step that talks to a db / store / queue / cache / external component keeps that component as a participant (`infra-participant-missing`).
+  - **Arrow labels** start with one tag, then a short action: `[REST] [gRPC] [SQL] [MQ] [CACHE] [WS] [CALL]`, e.g. `[REST] Fetch latest status` (`label-format`). No HTTP method, URL path or SQL in a label (`label-too-detailed`); that detail goes in the detail diagram.
+  - **Call sites**: list the arrows in the UC `steps[]` (`id`, `label`, `from`, `to`, optional `flow`). When the UC `source` is `code` or `mixed`, every step needs `call: "path:line"`, relative to the repo root (the parent of `docs/artifact`), pointing at the code that makes the arrow (`arrow-no-callsite`, `callsite-missing`). `draft` UCs are exempt. Docs (`*.md`) are never a valid call site.
   - **Good path** is shown by default. Every **bad path** and **edge case** is an `alt` fragment *inside the same diagram* (each with its own id); group buttons ("Bad paths", "Edge cases") and a per-fragment list ("Bad: API timeout", "Edge: zero projects") show or hide them in place, and the diagram reflows (hidden fragments leave no gap). A main UC should show at least 2 bad paths and 2 edge cases.
 - **User touchpoints**: a table of every message or screen the user sees, per scenario (good / bad / edge).
 - **Arrow legend**: what each arrow means (call, async message, response, event…).

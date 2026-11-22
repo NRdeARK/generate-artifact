@@ -1,6 +1,6 @@
 # Publish adapters
 
-The skill renders ONE self-contained file, `<dir>/build/index.html`. An **adapter** puts that file somewhere a person can open it and returns where. Everything runtime- or host-specific lives in an adapter file; `SKILL.md` stays neutral.
+The skill renders ONE page, `<dir>/build/index.html` (inline CSS/JS/SVG; each adapter file states which `render --fonts` mode to use). An **adapter** puts that file somewhere a person can open it and returns where. Everything runtime- or host-specific lives in an adapter file; `SKILL.md` stays neutral.
 
 ## Contract
 - **Input:** the path to `build/index.html`, a title (the project name), and the project's artifact directory.

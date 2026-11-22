@@ -3,6 +3,7 @@
 Publishes `build/index.html` as ONE private claude.ai artifact page through the `claude-artifacts` tools. This is the only place those tool steps live.
 
 - **Applies:** the `claude-artifacts` tools (`publish_files`, `get_artifact`, `guide`, ...) are available in this session.
+- **Render with:** `python scripts/artifact_sync.py render <dir> --fonts google`. The theme then loads Source Serif 4, Inter, IBM Plex Sans Thai and Noto Serif Thai from `fonts.googleapis.com` (the claude.ai artifact rules allow it and `fonts.gstatic.com`); no font files are uploaded. Offline or Google blocked: the page falls back to system fonts (Georgia / Segoe UI, Leelawadee UI / Tahoma for Thai). No other outside link is allowed.
 - **Title:** the project name, e.g. `Status Board` (no tab number, no version; git has the history).
 - **Once per session, before the first publish:** call `guide` with topic `pages`.
 

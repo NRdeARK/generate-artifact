@@ -7,7 +7,13 @@ A multi-agent plugin (**Antigravity**, **Claude Code**, **Codex**, and any `.age
 
 It ships one skill (`solution-artifact`), HTML templates, a swappable theme (Anthropic by default), EN/TH i18n and a stdlib-only Python script that validates traceability, renders the single page and exports a combined PDF. Publishing goes through a swappable adapter (`claude-ai` for private claude.ai hosting, or `local`); the script never touches the network.
 
-**What changed: single page + adapters.** `render` now writes one file, `build/index.html`, instead of six pages: tabs switch in-page with hash routing (`#intent`, `#tab1`..`#tab5`), a tab without data is shown disabled, `--tabs` is gone, and there are no cross-page links. Publishing moved out of `SKILL.md` into `skills/solution-artifact/adapters/` (contract in its `README.md`); `artifacts.json` now records `adapter` + `publish.<adapter> = {id, url}` with no version. Old `tabs.*` entries are left untouched (`validate` warns `legacy-tabs`; delete those artifacts manually). New command: `open`. The built-in theme no longer imports web fonts, so the page works offline.
+## What changed in 0.2.0
+
+- **Single page + adapters.** `render` writes one file, `build/index.html`: tabs switch in-page with hash routing (`#intent`, `#tab1`..`#tab5`), a tab without data is shown disabled, `--tabs` is gone, and there are no cross-page links. Publishing moved out of `SKILL.md` into `skills/solution-artifact/adapters/` (contract in its `README.md`); `artifacts.json` records `adapter` + `publish.<adapter> = {id, url}` with no version. Old `tabs.*` entries are left untouched (`validate` warns `legacy-tabs`; delete those artifacts manually). New command: `open`.
+- **Run modes.** *Step mode* is the default: one stage at a time (Intent, Tab 1..Tab 5), each validated, committed, rendered and published, then the agent stops until you approve in chat. Progress is kept in `docs/artifact/progress.json` (`{"mode": "step|auto", "approved": [...], "skipped": [...]}`, checked by `validate`), so a new session resumes at the next stage. Say "auto" or "just do it" to run every stage without pausing. There is no review mode.
+- **Thai timing.** Thai is no longer part of every stage. It runs once after Tab 5 is approved (step mode), when you say "translate", or once at the end of auto mode. The EN/TH toggle works while Thai is missing or partial.
+- **Stricter Tab 4 checks.** New warnings: `uc-too-large`, `infra-participant-missing`, `label-format`, `label-too-detailed`, `arrow-no-callsite`, `callsite-missing`, and `steps-missing` (a `code`/`mixed` UC must list `steps[]`, each with a real `call: "path:line"`).
+- **Fonts embedded.** The Anthropic theme ships subset woff2 files (Source Serif 4, Inter, IBM Plex Sans Thai, Noto Serif Thai; SIL OFL, see `themes/fonts/OFL.txt`) and `render` inlines them as base64 `@font-face`: same look, zero network references, about 0.2 MB larger per page. `artifact_sync.py` stays stdlib-only.
 
 ## Install
 
@@ -49,7 +55,7 @@ Tests: `python -m unittest discover tests` (the real-browser tests, `tests/brows
 .antigravity-plugin/      plugin.json (Antigravity native manifest)
 .claude-plugin/           plugin.json, marketplace.json (Claude Code manifest)
 skills/solution-artifact/
-  SKILL.md                router: intent vs solution, publish loop (one commit), sharing warning
+  SKILL.md                router: intent vs solution, run modes, stage loop (one commit), Thai timing, sharing warning
   intent.md, solution.md  the spec for each artifact
   templates/              HTML structure + base.css/base.js (no colors, no fonts)
   themes/anthropic.css    design tokens (swap for another theme)

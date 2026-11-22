@@ -57,7 +57,7 @@ Per UC (Main first, then Affected):
   - **Size limits, split before drawing**: a UC flow has at most **12 steps** and **6 participants**. Over either limit, split it into smaller UCs first (`uc-too-large` warns). A step may still expand into its own **detail sequence diagram** underneath.
   - **Infra stays in the diagram**: a step that talks to a db / store / queue / cache / external component keeps that component as a participant (`infra-participant-missing`).
   - **Arrow labels** start with one tag, then a short action: `[REST] [gRPC] [SQL] [MQ] [CACHE] [WS] [CALL]`, e.g. `[REST] Fetch latest status` (`label-format`). No HTTP method, URL path or SQL in a label (`label-too-detailed`); that detail goes in the detail diagram.
-  - **Call sites**: list the arrows in the UC `steps[]` (`id`, `label`, `from`, `to`, optional `flow`). When the UC `source` is `code` or `mixed`, every step needs `call: "path:line"`, relative to the repo root (the parent of `docs/artifact`), pointing at the code that makes the arrow (`arrow-no-callsite`, `callsite-missing`). `draft` UCs are exempt. Docs (`*.md`) are never a valid call site.
+  - **Call sites**: list the arrows in the UC `steps[]` (`id`, `label`, `from`, `to`, optional `flow`). **`steps[]` is required when the UC `source` is `code` or `mixed`** (`steps-missing` warns when it is absent or empty). Every such step needs `call: "path:line"`, relative to the repo root (the parent of `docs/artifact`), pointing at the code that makes the arrow (`arrow-no-callsite`, `callsite-missing`). `draft` UCs are exempt. Docs (`*.md`) are never a valid call site.
   - **Good path** is shown by default. Every **bad path** and **edge case** is an `alt` fragment *inside the same diagram* (each with its own id); group buttons ("Bad paths", "Edge cases") and a per-fragment list ("Bad: API timeout", "Edge: zero projects") show or hide them in place, and the diagram reflows (hidden fragments leave no gap). A main UC should show at least 2 bad paths and 2 edge cases.
 - **User touchpoints**: a table of every message or screen the user sees, per scenario (good / bad / edge).
 - **Arrow legend**: what each arrow means (call, async message, response, event…).
@@ -93,15 +93,15 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English → spawn a **fast, cheap translator sub-agent** to translate into Thai → render/publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow**: write and approve English through Tab 5 → then, once, spawn a **fast, cheap translator sub-agent** to translate into Thai → validate/commit/render/publish. Thai runs after Tab 5 is approved (step mode), when the user says "translate", or once at the end of auto mode; never per stage (see `SKILL.md` section 7). On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
 - **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
-- The sync script flags any entry whose TH translation is missing or stale.
+- The sync script flags any entry whose TH translation is missing or stale. The page works with Thai missing or partial: the toggle stays and untranslated text falls back to English.
 
 ## Versioning = git (decided 2026-11-15)
 - These are personal work docs, so **git is the history**. There's no hand-maintained changelog and no per-item "changed in vX" markers.
-- Each republish follows a commit. The page footer shows `updated <date> · <short commit>`.
+- Each publish follows a commit (commit, then render, then publish). The page footer shows `updated <date> · <short commit>`.
 - The collapsed "Changelog" and "Change track" sections are **generated from `git log`** (for the whole doc, or filtered to an entry's ID). Nothing is written by hand.
 - No document status badges (draft/approved…). The work is agile; the user says "go" in chat when ready.
 

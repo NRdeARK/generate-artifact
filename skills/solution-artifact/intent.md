@@ -21,7 +21,7 @@ Concept from the AI-native SDLC playbook: **intent.md**, a short, version-contro
 No open questions or decisions here. Anything unresolved goes to the solution artifact as **decisions to make**.
 
 ## Review gate
-The user reviews the intent **as the artifact page** and approves it in chat before any solution artifact is drafted (step mode stops here; see `SKILL.md` section 3).
+The user reviews the intent **as the artifact page** and approves it in chat before any solution artifact is drafted (step mode stops here; see `SKILL.md` section 3). The intent section is published with its Thai text like every other stage.
 
 ## Outputs
 - The `intent` section of the self-contained page `docs/artifact/build/index.html` (tab `#intent`), published through the selected adapter (see `SKILL.md` and `adapters/`).

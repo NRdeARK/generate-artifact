@@ -93,11 +93,11 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English through the last non-skipped stage → then, once, spawn a **fast, cheap translator sub-agent** to translate into Thai → validate/commit/render/publish. Thai runs after the last non-skipped stage is approved (step mode, announced and approved before the extra publish), when the user says "translate", or as the last step of auto mode; never per stage (see `SKILL.md` section 7). On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow** (every stage, Intent included): edit English → `i18n-diff` → spawn a **fast, cheap translator sub-agent** (model per `SKILL.md` Runtime notes) for the new/stale strings → validate/commit (EN + TH together)/render/publish. One approval per stage covers both languages; no separate Thai approval or publish. The user saying "translate" triggers a manual full refresh. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
 - **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
-- The sync script flags any entry whose TH translation is missing or stale. The page works with Thai missing or partial: the toggle stays and untranslated text falls back to English.
+- The sync script flags any entry whose TH translation is missing or stale. `validate` warns (`th-missing`, `th-stale`) until every string has a current Thai entry. If a string is still untranslated the page falls back to English, but published pages should be complete. The PDF export (`--lang en|th|both`) refuses Thai while entries are missing.
 
 ## Versioning = git (decided 2026-11-15)
 - These are personal work docs, so **git is the history**. There's no hand-maintained changelog and no per-item "changed in vX" markers.

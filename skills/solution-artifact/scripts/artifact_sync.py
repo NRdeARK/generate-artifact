@@ -7,7 +7,7 @@ Stdlib only. Never touches the network: publishing goes through an adapter
     artifact_sync.py validate   <artifact_dir> [--strict]
     artifact_sync.py render     <artifact_dir> [--theme NAME] [--fonts local|google] [--dry-run]
     artifact_sync.py open       <artifact_dir> [--no-open]
-    artifact_sync.py export-pdf <artifact_dir> [--lang en|th] [--theme NAME] [--fonts local|google] [--dry-run]
+    artifact_sync.py export-pdf <artifact_dir> [--lang en|th|both] [--theme NAME] [--fonts local|google] [--dry-run]
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
@@ -1588,25 +1588,23 @@ def find_browser():
     return found[0] if found else next((w for w in map(shutil.which, ("msedge", "chrome", "google-chrome", "chromium")) if w), None)
 
 
-def cmd_export_pdf(args):
-    project, summary = load_project(args.artifact_dir), Summary()
+def export_pdf_for(project, args, lang, summary):
+    """Write build/artifact-print-<lang>.html and convert it to build/artifact-<lang>.pdf. Returns False on failure."""
     tabs = present_tabs(project.root)
     out_dir = project.root.resolve() / "build"
-    html_path, pdf_path = out_dir / "artifact-print.html", out_dir / "artifact.pdf"
-    site = Site(project, print_mode=True, lang=args.lang, theme=args.theme, fonts=args.fonts)  # bad theme/shape exits via main()
+    html_path, pdf_path = out_dir / f"artifact-print-{lang}.html", out_dir / f"artifact-{lang}.pdf"
+    site = Site(project, print_mode=True, lang=lang, theme=args.theme, fonts=args.fonts)  # bad theme/shape exits via main()
     try:
         document = site.print_document(tabs)
     except (DataError, KeyError, ValueError, TypeError, AttributeError) as exc:
-        log.error("FAIL   print HTML: %s", exc)
+        log.error("FAIL   print HTML (%s): %s", lang, exc)
         summary.failed += 1
-        summary.report("export-pdf")
-        return 1
-    log.info("combined print HTML: cover + %s", ", ".join(tabs))
+        return False
+    log.info("combined print HTML (%s): cover + %s", lang, ", ".join(tabs))
     if args.dry_run:
         log.info("would write %s (%d bytes) and convert to %s", html_path, len(document.encode("utf-8")), pdf_path)
         summary.succeeded += 1
-        summary.report("export-pdf")
-        return 0
+        return True
     out_dir.mkdir(exist_ok=True)
     html_path.write_text(document, encoding="utf-8")
     copy_fonts(site.font_files, out_dir)
@@ -1616,15 +1614,31 @@ def cmd_export_pdf(args):
     if not browser:
         log.warning("no Edge/Chrome found. Open %s in a browser and print to PDF (enable background graphics).", html_path)
         summary.skipped += 1
-    else:
-        done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()],
-                              capture_output=True, text=True, timeout=120)
-        if pdf_path.is_file():
-            log.info("wrote  %s", pdf_path)
-            summary.succeeded += 1
-        else:
-            log.error("PDF conversion failed (exit %s): %s. Open %s and print to PDF instead.", done.returncode, done.stderr.strip()[-200:], html_path)
-            summary.failed += 1
+        return True
+    done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()],
+                          capture_output=True, text=True, timeout=120)
+    if pdf_path.is_file():
+        log.info("wrote  %s (%d bytes)", pdf_path, pdf_path.stat().st_size)
+        summary.succeeded += 1
+        return True
+    log.error("PDF conversion failed (exit %s): %s. Open %s and print to PDF instead.", done.returncode, done.stderr.strip()[-200:], html_path)
+    summary.failed += 1
+    return False
+
+
+def cmd_export_pdf(args):
+    project, summary = load_project(args.artifact_dir), Summary()
+    langs = ["en", "th"] if args.lang == "both" else [args.lang]
+    missing = th_status(project) if "th" in langs else []
+    if missing:
+        keys = ", ".join(key for key, _, _ in missing)
+        log.error("FAIL   Thai PDF refused: %d entries have no current Thai (%s). Run i18n-diff, translate them into i18n/th.json, then export again "
+                  "(or export English only with --lang en).", len(missing), keys)
+        summary.failed += 1
+        summary.report("export-pdf")
+        return 1
+    for lang in langs:
+        export_pdf_for(project, args, lang, summary)
     summary.report("export-pdf")
     return 1 if summary.failed else 0
 
@@ -1656,7 +1670,7 @@ def build_parser():
             cmd.add_argument("--fonts", choices=FONT_MODES, default="local", help="local: copy woff2 files to build/fonts/ (default); google: load from Google Fonts (claude-ai adapter)")
             cmd.add_argument("--dry-run", action="store_true", help="log what would be written; write nothing")
         if name == "export-pdf":
-            cmd.add_argument("--lang", choices=("en", "th"), default="en", help="language of the PDF (default en)")
+            cmd.add_argument("--lang", choices=("en", "th", "both"), default="en", help="PDF language: en (default), th, or both (two files, artifact-en.pdf and artifact-th.pdf)")
     return parser
 
 

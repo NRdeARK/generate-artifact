@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real-browser checks over the Chrome DevTools Protocol (no npm packages; Node 22+ has a global WebSocket).
-//   node cdp_check.mjs --browser <edge-or-chrome.exe> --pages <dir with intent.html, tab1..tab5.html> --shots <screenshot dir>
+//   node cdp_check.mjs --browser <edge-or-chrome.exe> --pages <dir with index.html> --shots <screenshot dir>
 // Prints one line: RESULT:{"<check>": {"ok": true|false, "detail": "..."}, ..., "_shots": [paths]}
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -99,10 +99,16 @@ async function emulate(kind, size = PHONE) {
   await frames();
 }
 
-async function goto(page, { lang } = {}) {
+// Opens index.html#<page>. By default the other tab sections are removed afterwards so the per-tab checks below
+// (bare document.querySelector calls) see exactly one tab; pass { all: true } to keep the whole page (routing checks).
+async function goto(page, { lang, all = false } = {}) {
+  const blank = waitEvent("Page.loadEventFired");  // a fragment-only change would not fire a load event, so go through about:blank
+  await send("Page.navigate", { url: "about:blank" });
+  await blank;
   const loaded = waitEvent("Page.loadEventFired");
-  await send("Page.navigate", { url: pathToFileURL(path.join(pages, `${page}.html`)).href });
+  await send("Page.navigate", { url: pathToFileURL(path.join(pages, "index.html")).href + "#" + page });
   await loaded;
+  if (!all) await ev(`document.querySelectorAll(".tab-section:not(.active)").forEach((s) => s.remove())`);
   if (lang) await ev(`document.documentElement.lang = ${JSON.stringify(lang)}`);
   await ev("document.fonts.ready.then(() => true)");
   await frames();
@@ -211,6 +217,32 @@ const scrollPage = async (y) => { await ev(`window.scrollTo(0, ${y})`); await sl
 
 
 async function main() {
+  // ============================================================ (0) one page, hash routing
+  const routeState = () => ev(`(() => ({ hash: location.hash, active: [...document.querySelectorAll(".tab-section.active")].map((s) => s.dataset.tab),
+    current: [...document.querySelectorAll("a.tab[aria-current=page]")].map((a) => a.dataset.tab), sections: document.querySelectorAll(".tab-section").length }))()`);
+  await goto("tab3", { all: true });
+  let r = await routeState();
+  record("routing.hash_on_load_opens_that_tab", r.sections === 6 && r.active.join() === "tab3" && r.current.join() === "tab3", JSON.stringify(r));
+  await ev(`document.querySelector('a.tab[data-tab="tab2"]').click()`);
+  await sleep(300);
+  r = await routeState();
+  record("routing.click_switches_tab_and_updates_hash", r.hash === "#tab2" && r.active.join() === "tab2" && r.current.join() === "tab2", JSON.stringify(r));
+  await ev("history.back()");
+  await sleep(300);
+  r = await routeState();
+  record("routing.back_returns_to_previous_tab", r.hash === "#tab3" && r.active.join() === "tab3", JSON.stringify(r));
+  await ev("history.forward()");
+  await sleep(300);
+  r = await routeState();
+  record("routing.forward_returns_to_next_tab", r.hash === "#tab2" && r.active.join() === "tab2", JSON.stringify(r));
+  await goto("UC-02", { all: true });
+  r = await routeState();
+  const inView = await ev(`(() => { const b = document.getElementById("UC-02").getBoundingClientRect(); return b.top < innerHeight && b.bottom > 0; })()`);
+  record("routing.id_hash_opens_the_tab_that_holds_it", r.active.join() === "tab4" && inView, JSON.stringify({ ...r, inView }));
+  await goto("tab4", { all: true });
+  const ids = await ev(`(() => { const seen = new Map(); document.querySelectorAll("[id]").forEach((e) => seen.set(e.id, (seen.get(e.id) || 0) + 1)); return [...seen].filter(([, n]) => n > 1).map(([id]) => id); })()`);
+  record("routing.no_duplicate_ids_in_document", ids.length === 0, ids.join(", ") || "none");
+
   // ============================================================ (1) phone layout, all six pages
   await emulate("phone");
   for (const page of PAGES) {

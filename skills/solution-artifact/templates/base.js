@@ -64,7 +64,7 @@
   }
 
   /* ---- diagram viewer: in-page overlay, one pane or two (compare), wheel/pinch zoom, drag to pan.
-         No popups, no Fullscreen API (claude.ai pages run in a sandboxed frame). ---- */
+         No popups, no Fullscreen API (hosted pages may run in a sandboxed frame). ---- */
   var viewer, panes = [], syncZoom = false, syncPan = false, active = 0, lastTrigger, moved = false;
   var pointers = {};
   var pinch = { pane: -1, dist: 0 };
@@ -387,37 +387,76 @@
     document.addEventListener("focusin", pinForSideIndex);
   }
 
-  /* ---- side index scrollspy (Tab 3 concepts, Tab 4 use cases) and sticky offsets ---- */
+  /* ---- side index scrollspy (Tab 3 concepts, Tab 4 use cases) and sticky offsets.
+         Only the visible tab's index is tracked: hidden sections have no layout. ---- */
+  var spy = null;
   function initSideIndex() {
     var header = document.querySelector(".top");
     if (header) doc.style.setProperty("--header-h", header.offsetHeight + "px");
-    var links = Array.prototype.slice.call(document.querySelectorAll('.side a[href^="#"]'));
-    var targets = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
-    if (!links.length || targets.indexOf(null) !== -1) return;
-    function update() {
-      var line = window.innerHeight * 0.3;
-      var current = 0;
-      targets.forEach(function (t, i) { if (t.getBoundingClientRect().top <= line) current = i; });
-      links.forEach(function (a, i) {
-        a.classList.toggle("active", i === current);
-        if (i === current) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current");
-      });
-    }
     var queued = false;
     function schedule() {
-      if (queued) return;
+      if (queued || !spy) return;
       queued = true;
-      setTimeout(function () { queued = false; update(); }, 30);
+      setTimeout(function () { queued = false; spy.update(); }, 30);
     }
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", function () { if (header) doc.style.setProperty("--header-h", header.offsetHeight + "px"); schedule(); });
+    var io = null;
     if ("IntersectionObserver" in window) {
-      try {
-        var io = new IntersectionObserver(schedule, { rootMargin: "0px 0px -60% 0px" });
-        targets.forEach(function (t) { io.observe(t); });
-      } catch (err) { /* the scroll listener above still works */ }
+      try { io = new IntersectionObserver(schedule, { rootMargin: "0px 0px -60% 0px" }); } catch (err) { /* the scroll listener still works */ }
     }
-    update();
+    return function track(section) {
+      if (io) io.disconnect();
+      var links = Array.prototype.slice.call((section || document).querySelectorAll('.side a[href^="#"]'));
+      var targets = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
+      if (!links.length || targets.indexOf(null) !== -1) { spy = null; return; }
+      if (io) targets.forEach(function (t) { io.observe(t); });
+      spy = { update: function () {
+        var line = window.innerHeight * 0.3;
+        var current = 0;
+        targets.forEach(function (t, i) { if (t.getBoundingClientRect().top <= line) current = i; });
+        links.forEach(function (a, i) {
+          a.classList.toggle("active", i === current);
+          if (i === current) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current");
+        });
+      } };
+      spy.update();
+    };
+  }
+
+  /* ---- one page, several tabs: #intent, #tab1..#tab5 pick the section; any other #id opens the tab that holds it ---- */
+  function initTabs(track) {
+    var sections = Array.prototype.slice.call(document.querySelectorAll(".tab-section"));
+    if (!sections.length) return;
+    var buttons = Array.prototype.slice.call(document.querySelectorAll("a.tab[data-tab]"));
+    function sectionFor(name) { return sections.filter(function (s) { return s.dataset.tab === name; })[0]; }
+    function show(section) {
+      sections.forEach(function (s) { s.classList.toggle("active", s === section); });
+      buttons.forEach(function (b) {
+        var on = b.dataset.tab === section.dataset.tab;
+        b.classList.toggle("current", on);
+        if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+      });
+      track(section);
+    }
+    function route() {
+      var id = decodeURIComponent(location.hash.slice(1));
+      var section = sectionFor(id), target = null;
+      if (!section && id) {
+        target = document.getElementById(id);
+        section = target && target.closest(".tab-section");
+      }
+      section = section || sections[0];
+      var changed = !section.classList.contains("active");
+      if (changed) show(section);
+      else if (!document.querySelector("a.tab.current")) show(section);
+      if (target) target.scrollIntoView();
+      else if (changed || sectionFor(id)) window.scrollTo(0, 0);
+    }
+    window.addEventListener("hashchange", route);
+    route();
+    /* an SVG may carry an id equal to a tab name (the intent diagram); undo the browser's own jump to it after load */
+    window.addEventListener("load", function () { if (sectionFor(decodeURIComponent(location.hash.slice(1)))) window.scrollTo(0, 0); });
   }
 
   window.addEventListener("resize", function () {
@@ -447,7 +486,7 @@
     var savedView = null;
     try { savedView = localStorage.getItem(TABLE_VIEW_KEY); } catch (err) { /* default */ }
     setTableView(savedView === "cards" ? "cards" : "flip", false);
-    initSideIndex();
+    initTabs(initSideIndex());
     if (document.body.classList.contains("print")) expandAllFragments();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

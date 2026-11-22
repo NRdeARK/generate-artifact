@@ -29,6 +29,7 @@ a.tab:hover { background: var(--tab-hover-bg); }
 .tab.disabled { background: none; border: 1px dashed var(--border); color: var(--tab-disabled-fg); cursor: not-allowed; }
 .tab.disabled .tab-num { background: none; border: 1px solid var(--border); }
 .tab-lock { flex: none; }
+.tab-section:not(.active) { display: none; }
 .lang { display: flex; gap: 0; }
 .lang button { font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
 html[lang="en"] [data-set-lang="en"], html[lang="th"] [data-set-lang="th"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }

@@ -657,7 +657,7 @@ def check_uc_size(uc, svg_steps=None):
 
 def check_diagram_steps(uc, svg_steps):
     """Every arrow drawn in the UC SVG must be declared in steps[], and vice versa."""
-    if not svg_steps:
+    if svg_steps is None:
         return []
     uid, diag, out = uc.get("id", "?"), uc.get("diagram", "diagram"), []
     declared_ids = {s.get("id") for s in uc_steps(uc) if isinstance(s.get("id"), str) and s.get("id")}
@@ -764,13 +764,13 @@ def check_call_sites(uc, repo_root, svg_steps=None):
 def repo_root_of(artifact_dir):
     """Parent of docs/artifact, or None when the folder is not laid out that way."""
     root = Path(artifact_dir).resolve()
-    return root.parent.parent if root.parent.name == "docs" else None
+    return root.parent.parent if root.name == "artifact" and root.parent.name == "docs" else None
 
 
 def check_big_project(project):
     registry, repo_root, out = string_ids(project.components), repo_root_of(project.root), []
     for uc in project.ucs:
-        participants, svg_steps = None, {}
+        participants, svg_steps = None, None
         if uc.get("diagram"):
             clean, _ = read_diagram(project.root, uc["diagram"])
             if clean:

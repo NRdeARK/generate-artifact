@@ -1883,6 +1883,9 @@ class BigProjectCheckTests(FixtureCase):
         _, found, _ = self.codes()
         self.assertIn("label-format", found)
         self.assertIn("label-too-detailed", found)
+        self.setUp()
+        (self.dir / "diagrams" / "uc-02.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"></svg>', encoding="utf-8")
+        self.assertTrue(self.found("step-not-in-diagram"))  # valid parsed diagram with zero arrows must still reconcile against steps[]
 
     def test_infra_participant_missing_ignores_desc_and_message_mentions(self):
         svg = self.dir / "diagrams" / "uc-01.svg"

@@ -24,5 +24,5 @@ No open questions or decisions here. Anything unresolved goes to the solution ar
 The user reviews the intent **as the artifact page** and approves it before any solution artifact is drafted.
 
 ## Outputs
-- Self-contained HTML page (`docs/artifact/build/intent.html`), plus optional private `claude.ai` artifact page when running in Claude (publish steps in `SKILL.md`).
+- The `intent` section of the self-contained page `docs/artifact/build/index.html` (tab `#intent`), published through the selected adapter (see `SKILL.md` and `adapters/`).
 - Local `docs/artifact/intent.md` with the same text content, versioned with git (see `solution.md` › Foundations).

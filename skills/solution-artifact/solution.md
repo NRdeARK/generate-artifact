@@ -1,6 +1,6 @@
 # Solution artifact (spec v0.1)
 
-One large, living document that runs from design to finish. Input: the **approved intent artifact**. One artifact per project; it gets republished as a new version on every change (see Versioning).
+One large, living document that runs from design to finish, rendered as ONE self-contained page with an in-page tab bar. Input: the **approved intent artifact**. One page per project; it is republished through the selected adapter (`adapters/README.md`) on every change (see Versioning).
 
 ## Cross-cutting rules (apply to every tab)
 
@@ -15,7 +15,7 @@ One large, living document that runs from design to finish. Input: the **approve
 - The same IDs are used in all tabs.
 
 ### Diagrams
-- **Every diagram is made with the `diagram-design` skill** (`diagram-design:diagram-design` in Claude) (swimlane, sequence, tree, architecture, ER…), styled from the same component registry.
+- **Every diagram is made with the `diagram-design` skill** if available (otherwise stop and ask the user): swimlane, sequence, tree, architecture, ER…, styled from the same component registry.
 
 ### Collapsing
 - Anything "done" or "detail" starts **collapsed**: decided decision groups, change tracks, file lists.
@@ -90,10 +90,10 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English → spawn a **fast/mid-tier sub-agent** (e.g. Sonnet, Gemini Flash/Neon, or Codex) to translate into Thai → render/publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow**: write and approve English → spawn a **fast, cheap translator sub-agent** to translate into Thai → render/publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
-- **Switching**: an EN | TH toggle on every page. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
+- **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
 - The sync script flags any entry whose TH translation is missing or stale.
 
 ## Versioning = git (decided 2026-11-15)
@@ -116,22 +116,22 @@ Per UC (Main first, then Affected):
     concepts.json
     i18n/th.json         # TH content keyed by ID (+ source hash)
     diagrams/            # diagram-design outputs (EN only)
-    artifacts.json       # tab → artifact slug + live version (for republish & cross-links)
+    artifacts.json       # adapter + publish.<adapter> = {id, url}; legacy tabs.* left untouched
   ```
 - JSON for anything the script reads; Markdown for prose (intent).
 
 ### Feedback loop: built-in, nothing to build
 - The user gives feedback **in chat or in artifact comments**. The agent reads the feedback, updates the data, re-renders/republishes, and replies in the thread.
-- Comments only work while pages are hosted as `claude.ai` artifacts. Chat works anywhere.
+- Comments work only where the adapter's host supports them (see `adapters/`). Chat works anywhere.
 
 ### Traceability check (in the sync script)
 - Validates the chain **outcome → UC → decision → component → files** and fails or warns on orphans: a UC with no sequence diagram, a component change with no reason or UC, a decision linked to no UC, an ID used but missing from the registry, a missing or stale TH translation, a CRUD cell with no UC and no "n/a (why)".
 
 ### Naming convention
-- Each tab is its own artifact, so titles must tell them apart in claude.ai lists: `<Project> · <n> <Tab>`, e.g. `Status Board · 0 Intent`, `Status Board · 2 Decisions`. The number keeps them sorted. No version in the title (git has it).
+- The page title is the project name, e.g. `Status Board`. Tabs are numbered in the tab bar: `0 Intent`, `1 Use cases`, … `5 Components`. No version in the title (git has it).
 
 ### Sharing (warn every time)
-- Pages start private. Before the user shares, remind them: **Tab 4 and Tab 5 contain real code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done manually by the user, never by the agent.
+- Pages start private. Before the user shares, remind them: **the one page contains Tab 4 and Tab 5 code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done manually by the user, never by the agent.
 
 ### Export
 - **One combined PDF**: intent + all existing tabs in order, with a cover page, generated locally from the same templates in print mode. Toggles get expanded: bad paths and edge cases shown, collapsed sections opened.
@@ -142,10 +142,10 @@ Per UC (Main first, then Affected):
 ## Decided (2026-11-15)
 - **Component levels = C4 L1–L3**: L1 Context, L2 Container (apps, APIs, DBs, queues, functions), L3 Component (modules inside a container). L4 Code is skipped; Tab 5 file lists cover it. Sequence diagrams use L2 participants, and detail diagrams drop to L3.
 - **Tab 4 source labels**: each diagram is marked `from code` / `draft (new code)` / `mixed`. Existing flows (especially Affected UCs) are **always read from current code**.
-- **One artifact per tab**, linked. The intent page is the hub, with links to all 5 tabs and back-links from each.
-- **Single source of truth**: a local project folder holds the data (registry, use cases, decisions, changelog, intent). There's one HTML template per tab. A sync script validates cross-tab consistency (IDs exist, levels match; full traceability check below), renders only the changed tabs, and publishes them.
+- **One page, in-page tabs**: intent and the 5 tabs are sections of `build/index.html`, switched client-side with hash routing (`#intent`, `#tab1`..`#tab5`; any other `#id` opens the tab that holds it). Cross-references (UC, decision, concept, component IDs) are in-page links.
+- **Single source of truth**: a local project folder holds the data (registry, use cases, decisions, changelog, intent). There's one HTML template per tab. A sync script validates cross-tab consistency (IDs exist, levels match; full traceability check below) and renders the whole page; an adapter publishes it.
 - Not every project needs all 5 tabs every time, but all 5 are the standard for development work.
-- **Tabs not created yet are shown disabled, not hidden.** The header is a sticky tab bar: numbered tabs 0–5 (Intent grouped apart from the Solution tabs), the current tab filled with the accent and `aria-current`, hover/focus states, and a horizontally scrolling row on phones. A missing tab is greyed with a lock and a tooltip "Not created yet", not clickable and not struck through. The nav therefore looks the same on every page and every project.
+- **Tabs not created yet are shown disabled, not hidden.** The header is a sticky tab bar: numbered tabs 0–5 (Intent grouped apart from the Solution tabs), the open tab filled with the accent and `aria-current`, hover/focus states, and a horizontally scrolling row on phones. A tab whose data file is absent is greyed with a lock and a tooltip "Not created yet", not clickable and not struck through. The bar therefore looks the same on every project.
 
 ## Resolved design points (v0.1 build)
 - Data format: JSON for anything the script reads, Markdown for the intent. Location: `docs/artifact/`.

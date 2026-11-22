@@ -603,16 +603,65 @@ def uc_steps(uc):
     return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
 
 
-def check_uc_size(uc):
+def parse_uc_diagram(clean_svg):
+    """(participants, svg_steps) from a sanitized UC sequence SVG.
+    participants: exact text of header <text> elements (outside title/desc/defs/data-block/data-step/data-fragment/data-legend)
+    plus any explicit data-participant attributes.
+    svg_steps: {step_id: (flow_id, label_without_step_prefix)} for every <g data-step="..."> in the SVG.
+    """
+    root = ET.fromstring(clean_svg)
+    participants, svg_steps = set(), {}
+
+    def walk(el, in_body=False, flow="good"):
+        tag = el.tag.split("}")[-1] if isinstance(el.tag, str) else ""
+        if tag in ("title", "desc", "defs"):
+            return
+        if not in_body:
+            part = el.get("data-participant")
+            if isinstance(part, str) and part.strip():
+                participants.add(part.strip())
+        if tag == "g":
+            if el.get("data-legend"):
+                return
+            frag = el.get("data-fragment")
+            if isinstance(frag, str) and frag:
+                flow = frag
+            sid = el.get("data-step")
+            if isinstance(sid, str) and sid:
+                raw = re.sub(r"\s+", " ", " ".join("".join(t.itertext()) for t in el.iter(f"{{{SVG_NS}}}text"))).strip()
+                label = re.sub(rf"^{re.escape(sid)}\s+", "", raw, flags=re.I)
+                svg_steps[sid] = (flow, label)
+                return
+            if el.get("data-block") or frag:
+                in_body = True
+        if not in_body and tag == "text":
+            txt = re.sub(r"\s+", " ", "".join(el.itertext())).strip()
+            if txt:
+                participants.add(txt)
+            return
+        for child in el:
+            walk(child, in_body, flow)
+
+    walk(root)
+    return participants, svg_steps
+
+
+def check_uc_size(uc, svg_steps=None):
     uid, out = uc.get("id", "?"), []
-    by_flow = {}
+    by_flow, declared_ids = {}, set()
     for step in uc_steps(uc):
-        by_flow.setdefault(step.get("flow") or "good", []).append(step)
+        flow = step.get("flow")
+        by_flow.setdefault(flow if isinstance(flow, str) and flow else "good", []).append(step)
+        if isinstance(step.get("id"), str) and step.get("id"):
+            declared_ids.add(step["id"])
+    for sid, (flow, _) in (svg_steps or {}).items():
+        if sid not in declared_ids:
+            by_flow.setdefault(flow or "good", []).append({"id": sid})
     for flow, steps in by_flow.items():
         if len(steps) > MAX_STEPS:
             out.append(Finding("warning", "uc-too-large", f"usecases.json {uid} flow {flow}",
                                f"{len(steps)} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
-    parts = uc.get("components") or []
+    parts = uc.get("components") if isinstance(uc.get("components"), list) else []
     if len(parts) > MAX_PARTICIPANTS:
         out.append(Finding("warning", "uc-too-large", f"usecases.json {uid}",
                            f"{len(parts)} participants (max {MAX_PARTICIPANTS}). Split it into smaller UCs, then redraw each diagram."))
@@ -627,16 +676,35 @@ def check_steps_required(uc):
     return []
 
 
-def check_infra_participants(uc, registry, diagram_text=None):
+def check_diagram_steps(uc, svg_steps):
+    """Every arrow drawn in the UC SVG must be declared in steps[], and vice versa."""
+    if svg_steps is None:
+        return []
+    uid, diag, out = uc.get("id", "?"), uc.get("diagram", "diagram"), []
+    declared_ids = {s.get("id") for s in uc_steps(uc) if isinstance(s.get("id"), str) and s.get("id")}
+    for sid in svg_steps:
+        if sid not in declared_ids:
+            out.append(Finding("warning", "step-undeclared", f"usecases.json {uid} step {sid}",
+                               f"{diag} draws step '{sid}' but it is not listed in steps[]. Declare every arrow in steps[]."))
+    for step in uc_steps(uc):
+        sid = step.get("id")
+        if isinstance(sid, str) and sid and sid not in svg_steps:
+            out.append(Finding("warning", "step-not-in-diagram", f"usecases.json {uid} step {sid}",
+                               f"steps[] lists '{sid}' but {diag} has no data-step=\"{sid}\". Add the arrow to the diagram or remove it from steps[]."))
+    return out
+
+
+def check_infra_participants(uc, registry, diagram_participants=None):
     """Steps that talk to a db/store/queue/cache/external component must keep it in the UC's participants and diagram."""
     uid, out, seen = uc.get("id", "?"), [], set()
-    listed = set(uc.get("components") or [])
+    listed = {c for c in (uc.get("components") if isinstance(uc.get("components"), list) else []) if isinstance(c, str)}
     for step in uc_steps(uc):
         for end in (step.get("from"), step.get("to")):
             comp = registry.get(end) if isinstance(end, str) else None
             if not comp or comp.get("kind") not in INFRA_KINDS or end in seen:
                 continue
-            in_diagram = diagram_text is None or str(comp.get("name", "")) in diagram_text
+            name = str(comp.get("name", "")).strip()
+            in_diagram = diagram_participants is None or name in diagram_participants or end in diagram_participants
             if end not in listed or not in_diagram:
                 seen.add(end)
                 out.append(Finding("warning", "infra-participant-missing", f"usecases.json {uid} step {step.get('id', '?')}",
@@ -645,60 +713,92 @@ def check_infra_participants(uc, registry, diagram_text=None):
     return out
 
 
-def check_step_labels(uc):
+def _check_label(where, label):
     out = []
-    for step in uc_steps(uc):
-        label, where = step.get("label"), f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}"
-        label = label if isinstance(label, str) else ""
-        if not TAG_RE.match(label):
-            out.append(Finding("warning", "label-format", where,
-                               f"label '{label}' must start with one tag of {', '.join('[%s]' % t for t in LABEL_TAGS)} then a short action, e.g. '[REST] Fetch latest status'."))
-        if any(rx.search(label) for rx in DETAIL_RES):
-            out.append(Finding("warning", "label-too-detailed", where,
-                               f"label '{label}' has an HTTP method, URL path or SQL. Say what the step does ('[REST] Fetch latest status'); put the detail in the UC details diagram."))
+    if not TAG_RE.match(label):
+        out.append(Finding("warning", "label-format", where,
+                           f"label '{label}' must start with one tag of {', '.join('[%s]' % t for t in LABEL_TAGS)} then a short action, e.g. '[REST] Fetch latest status'."))
+    if any(rx.search(label) for rx in DETAIL_RES):
+        out.append(Finding("warning", "label-too-detailed", where,
+                           f"label '{label}' has an HTTP method, URL path or SQL. Say what the step does ('[REST] Fetch latest status'); put the detail in the UC details diagram."))
     return out
 
 
-def check_call_sites(uc, repo_root):
+def check_step_labels(uc, svg_steps=None):
+    uid, out = uc.get("id", "?"), []
+    for step in uc_steps(uc):
+        label = step.get("label")
+        out += _check_label(f"usecases.json {uid} step {step.get('id', '?')}", label if isinstance(label, str) else "")
+    diag = uc.get("diagram", "diagram")
+    for sid, (_, label) in (svg_steps or {}).items():
+        out += _check_label(f"{diag} {uid} step {sid}", label)
+    return out
+
+
+def check_call_sites(uc, repo_root, svg_steps=None):
     """Each step of a code/mixed UC needs call 'path:line' pointing at a real source line. Draft UCs are exempt; repo_root None skips existence."""
     if uc.get("source") not in CODE_SOURCES:
         return []
-    out = []
+    uid, out, declared_ids = uc.get("id", "?"), [], set()
     for step in uc_steps(uc):
-        where, call = f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}", step.get("call")
+        sid = step.get("id")
+        if isinstance(sid, str) and sid:
+            declared_ids.add(sid)
+        where, call = f"usecases.json {uid} step {sid if sid is not None else '?'}", step.get("call")
         match = CALL_RE.match(call) if isinstance(call, str) else None
         if not match:
             out.append(Finding("warning", "arrow-no-callsite", where,
                                f"{uc.get('source')} UC needs call: \"path:line\" (the code that makes this arrow). Add it, or mark the UC source 'draft' if the code is not written yet."))
             continue
-        rel, line = match.group(1), int(match.group(2))
+        rel, line_raw = match.group(1), match.group(2)
+        try:
+            line = int(line_raw)
+        except ValueError:
+            out.append(Finding("warning", "callsite-missing", where, f"call {call}: invalid line number. Fix the line number."))
+            continue
         if rel.lower().endswith(".md"):
             out.append(Finding("warning", "callsite-missing", where, f"call {call} points at a doc. Docs are not a valid source; point at code."))
         elif repo_root is not None:
-            target = (repo_root / rel).resolve()
-            inside = repo_root.resolve() in target.parents
-            if not (inside and target.is_file()):
+            try:
+                target = (repo_root / rel).resolve()
+                inside = repo_root.resolve() in target.parents
+                exists = inside and target.is_file()
+            except (ValueError, OSError):
+                exists = False  # e.g. NUL byte or over-long path in call
+            if not exists:
                 out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} does not exist under {repo_root}. Fix the path."))
-            elif line < 1 or line > len(target.read_text(encoding="utf-8", errors="replace").splitlines()):
-                out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} has fewer than {line} lines. Fix the line number."))
+            else:
+                try:
+                    line_count = len(target.read_text(encoding="utf-8", errors="replace").splitlines())
+                except OSError:
+                    out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} could not be read. Check file permissions."))
+                else:
+                    if line < 1 or line > line_count:
+                        out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} has fewer than {line} lines. Fix the line number."))
+    for sid in (svg_steps or {}):
+        if sid not in declared_ids:
+            out.append(Finding("warning", "arrow-no-callsite", f"{uc.get('diagram', 'diagram')} {uid} step {sid}",
+                               f"{uc.get('source')} UC draws step '{sid}' with no declared call: \"path:line\" in steps[]. Add it, or mark the UC source 'draft'."))
     return out
 
 
 def repo_root_of(artifact_dir):
     """Parent of docs/artifact, or None when the folder is not laid out that way."""
     root = Path(artifact_dir).resolve()
-    return root.parent.parent if root.parent.name == "docs" else None
+    return root.parent.parent if root.name == "artifact" and root.parent.name == "docs" else None
 
 
 def check_big_project(project):
     registry, repo_root, out = string_ids(project.components), repo_root_of(project.root), []
     for uc in project.ucs:
-        diagram_text = None
+        participants, svg_steps = None, None
         if uc.get("diagram"):
             clean, _ = read_diagram(project.root, uc["diagram"])
-            diagram_text = html.unescape(re.sub(r"<[^>]+>", "\u0000", clean)) if clean else None
-        out += (check_steps_required(uc) + check_uc_size(uc) + check_infra_participants(uc, registry, diagram_text)
-                + check_step_labels(uc) + check_call_sites(uc, repo_root))
+            if clean:
+                participants, svg_steps = parse_uc_diagram(clean)
+        out += (check_steps_required(uc) + check_uc_size(uc, svg_steps) + check_diagram_steps(uc, svg_steps)
+                + check_infra_participants(uc, registry, participants)
+                + check_step_labels(uc, svg_steps) + check_call_sites(uc, repo_root, svg_steps))
     return out
 
 

@@ -110,30 +110,110 @@
           "call": "web/src/api/projects.ts:3"
         },
         {
-          "id": "2.1",
-          "label": "[CALL] Hand over to read handler",
-          "from": "CMP-API",
-          "to": "CMP-API-READ",
-          "call": "api/src/read_handler.py:2"
+          "id": "2b",
+          "flow": "bad-timeout",
+          "label": "[CALL] Wait 5s and time out",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:4"
+        },
+        {
+          "id": "2c",
+          "flow": "bad-timeout",
+          "label": "[CALL] Show retry prompt",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:4"
         },
         {
           "id": "3",
           "label": "[SQL] Read latest status",
-          "from": "CMP-API-READ",
+          "from": "CMP-API",
           "to": "CMP-DB",
           "call": "api/src/read_handler.py:3"
         },
         {
-          "id": "4",
-          "label": "[SQL] Return rows",
+          "id": "3b",
+          "flow": "bad-db",
+          "label": "[SQL] Return query error",
           "from": "CMP-DB",
-          "to": "CMP-API-READ",
+          "to": "CMP-API",
+          "call": "api/src/read_handler.py:3"
+        },
+        {
+          "id": "3c",
+          "flow": "bad-db",
+          "label": "[REST] Return server error",
+          "from": "CMP-API",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:4"
+        },
+        {
+          "id": "3d",
+          "flow": "bad-db",
+          "label": "[CALL] Show error banner",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:4"
+        },
+        {
+          "id": "4",
+          "label": "[SQL] Return status rows",
+          "from": "CMP-DB",
+          "to": "CMP-API",
           "call": "api/src/read_handler.py:4"
+        },
+        {
+          "id": "4e",
+          "flow": "edge-empty",
+          "label": "[REST] Return empty list",
+          "from": "CMP-API",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
+        },
+        {
+          "id": "4f",
+          "flow": "edge-empty",
+          "label": "[CALL] Show empty state",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
+        },
+        {
+          "id": "4g",
+          "flow": "edge-many",
+          "label": "[CALL] Cap at 50 rows",
+          "from": "CMP-API",
+          "to": "CMP-API",
+          "call": "api/src/read_handler.py:3"
+        },
+        {
+          "id": "4h",
+          "flow": "edge-many",
+          "label": "[REST] Return first page",
+          "from": "CMP-API",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
+        },
+        {
+          "id": "4i",
+          "flow": "edge-many",
+          "label": "[CALL] Show page and more",
+          "from": "CMP-WEB",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
         },
         {
           "id": "5",
           "label": "[REST] Return project list",
           "from": "CMP-API",
+          "to": "CMP-WEB",
+          "call": "web/src/api/projects.ts:5"
+        },
+        {
+          "id": "6",
+          "label": "[CALL] Show fresh cards",
+          "from": "CMP-WEB",
           "to": "CMP-WEB",
           "call": "web/src/api/projects.ts:5"
         }
@@ -228,10 +308,37 @@
           "to": "CMP-API"
         },
         {
+          "id": "1b",
+          "flow": "bad-invalid",
+          "label": "[REST] Reject invalid status",
+          "from": "CMP-API",
+          "to": "CMP-WEB"
+        },
+        {
           "id": "2",
           "label": "[MQ] Publish status event",
           "from": "CMP-API",
           "to": "CMP-QUEUE"
+        },
+        {
+          "id": "2b",
+          "flow": "bad-queue",
+          "label": "[MQ] Report queue down",
+          "from": "CMP-QUEUE",
+          "to": "CMP-API"
+        },
+        {
+          "id": "3b",
+          "flow": "bad-queue",
+          "label": "[REST] Warn update delayed",
+          "from": "CMP-API",
+          "to": "CMP-WEB"
+        },
+        {
+          "id": "3",
+          "label": "[REST] Confirm status saved",
+          "from": "CMP-API",
+          "to": "CMP-WEB"
         },
         {
           "id": "4",
@@ -240,10 +347,37 @@
           "to": "CMP-AGG"
         },
         {
+          "id": "4e",
+          "flow": "edge-duplicate",
+          "label": "[CALL] Skip unchanged write",
+          "from": "CMP-AGG",
+          "to": "CMP-AGG"
+        },
+        {
+          "id": "4f",
+          "flow": "edge-concurrent",
+          "label": "[SQL] Upsert if newer",
+          "from": "CMP-AGG",
+          "to": "CMP-DB"
+        },
+        {
+          "id": "4g",
+          "flow": "edge-concurrent",
+          "label": "[SQL] Confirm latest wins",
+          "from": "CMP-DB",
+          "to": "CMP-AGG"
+        },
+        {
           "id": "5",
           "label": "[SQL] Save status and history",
           "from": "CMP-AGG",
           "to": "CMP-DB"
+        },
+        {
+          "id": "6",
+          "label": "[SQL] Confirm write",
+          "from": "CMP-DB",
+          "to": "CMP-AGG"
         }
       ]
     },
@@ -318,23 +452,54 @@
       "steps": [
         {
           "id": "1",
-          "label": "[CALL] Start weekly export",
+          "label": "[CALL] Trigger weekly timer",
           "from": "CMP-CRON",
-          "to": "CMP-CRON",
+          "to": "CMP-AGG",
+          "call": "jobs/weekly_export.py:2"
+        },
+        {
+          "id": "1e",
+          "flow": "edge-first",
+          "label": "[CALL] Mark all projects new",
+          "from": "CMP-AGG",
+          "to": "CMP-AGG",
           "call": "jobs/weekly_export.py:2"
         },
         {
           "id": "2",
           "label": "[SQL] Read week history",
-          "from": "CMP-CRON",
+          "from": "CMP-AGG",
           "to": "CMP-DB",
           "call": "jobs/weekly_export.py:3"
         },
         {
+          "id": "3",
+          "label": "[SQL] Return history rows",
+          "from": "CMP-DB",
+          "to": "CMP-AGG",
+          "call": "jobs/weekly_export.py:3"
+        },
+        {
+          "id": "3e",
+          "flow": "edge-quiet",
+          "label": "[CALL] Email no changes note",
+          "from": "CMP-AGG",
+          "to": "CMP-AGG",
+          "call": "jobs/weekly_export.py:4"
+        },
+        {
           "id": "4",
           "label": "[CALL] Send weekly email",
-          "from": "CMP-CRON",
-          "to": "CMP-CRON",
+          "from": "CMP-AGG",
+          "to": "CMP-AGG",
+          "call": "jobs/weekly_export.py:4"
+        },
+        {
+          "id": "4b",
+          "flow": "bad-email",
+          "label": "[CALL] Queue send retry",
+          "from": "CMP-AGG",
+          "to": "CMP-AGG",
           "call": "jobs/weekly_export.py:4"
         }
       ]

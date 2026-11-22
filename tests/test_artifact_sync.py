@@ -2182,8 +2182,8 @@ class BigProjectCheckTests(FixtureCase):
     def test_sample_project_has_none_of_the_new_codes(self):
         code, found, out = self.codes()
         self.assertEqual(code, 0, out)
-        self.assertFalse(found & {"uc-too-large", "infra-participant-missing", "label-format", "label-too-detailed",
-                                  "arrow-no-callsite", "callsite-missing"}, out)
+        self.assertFalse(found & {"uc-too-large", "step-undeclared", "step-not-in-diagram", "infra-participant-missing",
+                                  "label-format", "label-too-detailed", "arrow-no-callsite", "callsite-missing"}, out)
 
     def test_uc_too_large_fires_on_13_steps_and_7_participants(self):
         self.edit_uc("UC-01", lambda u: u.update(steps=[{"id": str(i), "label": "[CALL] Do it"} for i in range(12)]))
@@ -2204,6 +2204,15 @@ class BigProjectCheckTests(FixtureCase):
         code, found, out = self.codes()
         self.assertIn("infra-participant-missing", found)
         self.assertIn("CMP-DB", out)
+
+    def test_malformed_flow_components_and_call_do_not_crash_or_hide_other_ucs(self):
+        self.edit_uc("UC-01", lambda u: u.update(source="code", components=[["x"]],
+                                                 steps=[{"id": "1", "label": "[CALL] Do it", "flow": [], "call": "a\u0000b:1"}]))
+        self.edit_uc("UC-02", lambda u: u.update(steps=[{"id": "1", "label": "Bad label"}]))
+        code, found, out = self.codes()
+        self.assertNotIn("bad-shape", found, out)
+        self.assertIn("callsite-missing", found)
+        self.assertIn("label-format", found)  # UC-02 still checked after UC-01 was malformed
 
     def test_infra_participant_missing_fires_when_diagram_drops_the_lifeline(self):
         svg = self.dir / "diagrams" / "uc-03.svg"
@@ -2244,6 +2253,44 @@ class BigProjectCheckTests(FixtureCase):
         self.dir = loose
         self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/nope.ts:1"))
         self.assertFalse(self.found("callsite-missing"))
+
+    def test_diagram_steps_reconcile_omitted_extra_and_svg_labels(self):
+        self.edit_uc("UC-01", lambda u: u["steps"].pop())
+        _, found, _ = self.codes()
+        self.assertIn("step-undeclared", found)
+        self.assertIn("arrow-no-callsite", found)  # omitted step in mixed UC cannot bypass call-site check
+        self.setUp()
+        self.edit_uc("UC-02", lambda u: u["steps"].append({"id": "99", "label": "[CALL] Extra step", "from": "CMP-WEB", "to": "CMP-API"}))
+        self.assertTrue(self.found("step-not-in-diagram"))
+        self.setUp()
+        svg = self.dir / "diagrams" / "uc-01.svg"
+        svg.write_text(svg.read_text(encoding="utf-8").replace("2 [REST] Fetch project list", "2 GET /projects"), encoding="utf-8")
+        _, found, _ = self.codes()
+        self.assertIn("label-format", found)
+        self.assertIn("label-too-detailed", found)
+        self.setUp()
+        (self.dir / "diagrams" / "uc-02.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"></svg>', encoding="utf-8")
+        self.assertTrue(self.found("step-not-in-diagram"))  # valid parsed diagram with zero arrows must still reconcile against steps[]
+
+    def test_infra_participant_missing_ignores_desc_and_message_mentions(self):
+        svg = self.dir / "diagrams" / "uc-01.svg"
+        raw = svg.read_text(encoding="utf-8")
+        self.assertIn("from the Projects DB", raw)  # <desc> still mentions Projects DB
+        updated = raw.replace(">Projects DB</text>", ">Store</text>", 1)
+        self.assertNotEqual(raw, updated)
+        svg.write_text(updated, encoding="utf-8")
+        self.assertTrue(self.found("infra-participant-missing"))
+
+    def test_callsite_oversized_line_and_unreadable_source_report_finding_without_crashing(self):
+        from unittest.mock import patch
+        self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/api/projects.ts:" + "9" * 5000))
+        _, found, out = self.codes()
+        self.assertNotIn("bad-shape", found, out)
+        self.assertIn("callsite-missing", found)
+        uc = {"id": "UC-01", "source": "code", "steps": [{"id": "1", "call": "web/src/api/projects.ts:1"}]}
+        with patch.object(Path, "read_text", side_effect=PermissionError("unreadable")):
+            findings = sync.check_call_sites(uc, self.proj)
+        self.assertEqual([f.code for f in findings], ["callsite-missing"])
 
 
 class ProgressAndStepsTests(FixtureCase):

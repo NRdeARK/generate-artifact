@@ -49,7 +49,7 @@ Build only the tabs the work needs (each is its own artifact). A tab whose data 
 ## 5. Publish loop (per page set)
 1. Edit data files.
 2. **Thai:** `python scripts/artifact_sync.py i18n-diff <dir>` lists missing/stale entries as JSON. Spawn one fast/mid-tier sub-agent (e.g. Sonnet, Gemini Flash/Neon, or Codex) to translate only those into `i18n/th.json` as `{key: {"source_hash": <from diff>, "text": {path: thai}}}`. Keep IDs, component names, code, paths untranslated.
-3. `python scripts/artifact_sync.py validate <dir>` - fix every ERROR (exit 1). Warnings (stale Thai, missing diagram) are shown; fix or tell the user.
+3. `python scripts/artifact_sync.py validate <dir>` - fix every ERROR (exit 1, including missing or stale Thai). Warnings (missing diagram, orphan Thai) are shown; fix or tell the user.
 4. **Commit** the data (`git commit`, mention IDs like `UC-02` in the message so change tracks fill in). The footer and changelogs come from git, so always render *after* this commit.
 5. `python scripts/artifact_sync.py render <dir> [--tabs tab2 ...] [--theme anthropic]` -> `<dir>/build/<tab>.html` (self-contained). `--theme` takes a name in `themes/` or a path to a .css file.
 6. **Hosting (optional, Claude-only):** When `claude-artifacts` tools are available, publish each changed page: first call `guide` (topic `pages`) once per session. New: `publish_files` with `files: [{as: "index.html", path: <build file>}]`, `title` and `icon`. Update: `get_artifact` for `base_version`, republish (pass `shared_live` if shared).

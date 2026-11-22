@@ -1,6 +1,6 @@
 # Solution artifact (spec v0.1)
 
-One large, living document that runs from design to finish. Input: the **approved intent artifact**. One artifact per project; it gets republished as a new version on every change (see Versioning).
+One large, living document that runs from design to finish, rendered as ONE self-contained page with an in-page tab bar. Input: the **approved intent artifact**. One page per project; it is republished through the selected adapter (`adapters/README.md`) on every change (see Versioning).
 
 ## Cross-cutting rules (apply to every tab)
 
@@ -15,7 +15,7 @@ One large, living document that runs from design to finish. Input: the **approve
 - The same IDs are used in all tabs.
 
 ### Diagrams
-- **Every diagram is made with the `diagram-design` skill** (`diagram-design:diagram-design` in Claude) (swimlane, sequence, tree, architecture, ER…), styled from the same component registry.
+- **Every diagram is made with the `diagram-design` skill** if available (otherwise stop and ask the user): swimlane, sequence, tree, architecture, ER…, styled from the same component registry.
 
 ### Collapsing
 - Anything "done" or "detail" starts **collapsed**: decided decision groups, change tracks, file lists.
@@ -25,7 +25,7 @@ One large, living document that runs from design to finish. Input: the **approve
 ## Tab 1 — Use cases & coverage
 1. **Recap from intent**: before state and the issues/problems (pulled from the intent artifact, not re-written).
 2. **Outcome success → use cases**: a full-width outcome banner, then a tree diagram (`diagrams/uc-tree.svg`: Outcome → Main UCs → Affected UCs, each Affected edge labelled with the causing component), then one compact table (ID, Tier, plain-words summary, traced from, link to Tab 4). The table replaces any separate list of Affected UCs.
-3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it.
+3. **Impact sweep → Affected UCs**: for each data or component touched, ask "if this changes, which existing flows break or behave differently?" Every hit becomes an Affected UC, linked to the component that causes it. Keep each UC small: max 12 steps and 6 participants per flow; split bigger ones into separate UCs before drawing (see Tab 4).
 4. **CRUD lifecycle check**: a matrix of **entity/component × Create / Read / Update / Delete**. Each cell maps to a UC or is explicitly marked "not needed (why)". Gaps get flagged so no lifecycle is half-built.
 5. Before/after overview diagram using registry components.
 
@@ -54,7 +54,10 @@ Per UC (Main first, then Affected):
 - **Sequence diagram** (ONE per UC, inline SVG, text at least 11px):
   - Written **from reading the actual code**, not from existing docs (docs go stale or skip steps).
   - **Every arrow is labelled.** No unlabelled hops through middle components.
-  - Big flows get split: the top level shows the overview, and a step expands into its own **detail sequence diagram** underneath.
+  - **Size limits, split before drawing**: a UC flow has at most **12 steps** and **6 participants**. Over either limit, split it into smaller UCs first (`uc-too-large` warns). A step may still expand into its own **detail sequence diagram** underneath.
+  - **Infra stays in the diagram**: a step that talks to a db / store / queue / cache / external component keeps that component as a participant (`infra-participant-missing`).
+  - **Arrow labels** start with one tag, then a short action: `[REST] [gRPC] [SQL] [MQ] [CACHE] [WS] [CALL]`, e.g. `[REST] Fetch latest status` (`label-format`). No HTTP method, URL path or SQL in a label (`label-too-detailed`); that detail goes in the detail diagram.
+  - **Call sites**: list the arrows in the UC `steps[]` (`id`, `label`, `from`, `to`, optional `flow`). **`steps[]` is required when the UC `source` is `code` or `mixed`** (`steps-missing` warns when it is absent or empty). Every such step needs `call: "path:line"`, relative to the repo root (the parent of `docs/artifact`), pointing at the code that makes the arrow (`arrow-no-callsite`, `callsite-missing`). `draft` UCs are exempt. Docs (`*.md`) are never a valid call site.
   - **Good path** is shown by default. Every **bad path** and **edge case** is an `alt` fragment *inside the same diagram* (each with its own id); group buttons ("Bad paths", "Edge cases") and a per-fragment list ("Bad: API timeout", "Edge: zero projects") show or hide them in place, and the diagram reflows (hidden fragments leave no gap). A main UC should show at least 2 bad paths and 2 edge cases.
 - **User touchpoints**: a table of every message or screen the user sees, per scenario (good / bad / edge).
 - **Arrow legend**: what each arrow means (call, async message, response, event…).
@@ -90,15 +93,15 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English → spawn a **fast/mid-tier sub-agent** (e.g. Sonnet, Gemini Flash/Neon, or Codex) to translate into Thai → render/publish. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow** (every stage, Intent included): edit English → `i18n-diff` → spawn a **fast, cheap translator sub-agent** (model per `SKILL.md` Runtime notes) for the new/stale strings → validate/commit (EN + TH together)/render/publish. One approval per stage covers both languages; no separate Thai approval or publish. The user saying "translate" triggers a manual full refresh. On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
-- **Switching**: an EN | TH toggle on every page. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
-- The sync script flags any entry whose TH translation is missing or stale.
+- **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
+- The sync script flags any entry whose TH translation is missing or stale. `validate` warns (`th-missing`, `th-stale`) until every string has a current Thai entry. If a string is still untranslated the page falls back to English, but published pages should be complete. The PDF export (`--lang en|th|both`) refuses Thai while entries are missing.
 
 ## Versioning = git (decided 2026-11-15)
 - These are personal work docs, so **git is the history**. There's no hand-maintained changelog and no per-item "changed in vX" markers.
-- Each republish follows a commit. The page footer shows `updated <date> · <short commit>`.
+- Each publish follows the stage commit (commit, then render, then publish; the publish record is its own later commit, never an amend). The page footer shows `updated <date> · <short commit>`.
 - The collapsed "Changelog" and "Change track" sections are **generated from `git log`** (for the whole doc, or filtered to an entry's ID). Nothing is written by hand.
 - No document status badges (draft/approved…). The work is agile; the user says "go" in chat when ready.
 
@@ -116,22 +119,22 @@ Per UC (Main first, then Affected):
     concepts.json
     i18n/th.json         # TH content keyed by ID (+ source hash)
     diagrams/            # diagram-design outputs (EN only)
-    artifacts.json       # tab → artifact slug + live version (for republish & cross-links)
+    artifacts.json       # adapter + publish.<adapter> = {id, url}; legacy tabs.* left untouched
   ```
 - JSON for anything the script reads; Markdown for prose (intent).
 
 ### Feedback loop: built-in, nothing to build
 - The user gives feedback **in chat or in artifact comments**. The agent reads the feedback, updates the data, re-renders/republishes, and replies in the thread.
-- Comments only work while pages are hosted as `claude.ai` artifacts. Chat works anywhere.
+- Comments work only where the adapter's host supports them (see `adapters/`). Chat works anywhere.
 
 ### Traceability check (in the sync script)
 - Validates the chain **outcome → UC → decision → component → files** and fails or warns on orphans: a UC with no sequence diagram, a component change with no reason or UC, a decision linked to no UC, an ID used but missing from the registry, a missing or stale TH translation, a CRUD cell with no UC and no "n/a (why)".
 
 ### Naming convention
-- Each tab is its own artifact, so titles must tell them apart in claude.ai lists: `<Project> · <n> <Tab>`, e.g. `Status Board · 0 Intent`, `Status Board · 2 Decisions`. The number keeps them sorted. No version in the title (git has it).
+- The page title is the project name, e.g. `Status Board`. Tabs are numbered in the tab bar: `0 Intent`, `1 Use cases`, … `5 Components`. No version in the title (git has it).
 
 ### Sharing (warn every time)
-- Pages start private. Before the user shares, remind them: **Tab 4 and Tab 5 contain real code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done manually by the user, never by the agent.
+- Pages start private. Before the user shares, remind them: **the one page contains Tab 4 and Tab 5 code details** (flows, schemas, file paths). Check for secrets or internal hostnames first. Sharing is done manually by the user, never by the agent.
 
 ### Export
 - **One combined PDF**: intent + all existing tabs in order, with a cover page, generated locally from the same templates in print mode. Toggles get expanded: bad paths and edge cases shown, collapsed sections opened.
@@ -142,10 +145,10 @@ Per UC (Main first, then Affected):
 ## Decided (2026-11-15)
 - **Component levels = C4 L1–L3**: L1 Context, L2 Container (apps, APIs, DBs, queues, functions), L3 Component (modules inside a container). L4 Code is skipped; Tab 5 file lists cover it. Sequence diagrams use L2 participants, and detail diagrams drop to L3.
 - **Tab 4 source labels**: each diagram is marked `from code` / `draft (new code)` / `mixed`. Existing flows (especially Affected UCs) are **always read from current code**.
-- **One artifact per tab**, linked. The intent page is the hub, with links to all 5 tabs and back-links from each.
-- **Single source of truth**: a local project folder holds the data (registry, use cases, decisions, changelog, intent). There's one HTML template per tab. A sync script validates cross-tab consistency (IDs exist, levels match; full traceability check below), renders only the changed tabs, and publishes them.
+- **One page, in-page tabs**: intent and the 5 tabs are sections of `build/index.html`, switched client-side with hash routing (`#intent`, `#tab1`..`#tab5`; any other `#id` opens the tab that holds it). Cross-references (UC, decision, concept, component IDs) are in-page links.
+- **Single source of truth**: a local project folder holds the data (registry, use cases, decisions, changelog, intent). There's one HTML template per tab. A sync script validates cross-tab consistency (IDs exist, levels match; full traceability check below) and renders the whole page; an adapter publishes it.
 - Not every project needs all 5 tabs every time, but all 5 are the standard for development work.
-- **Tabs not created yet are shown disabled, not hidden.** The header is a sticky tab bar: numbered tabs 0–5 (Intent grouped apart from the Solution tabs), the current tab filled with the accent and `aria-current`, hover/focus states, and a horizontally scrolling row on phones. A missing tab is greyed with a lock and a tooltip "Not created yet", not clickable and not struck through. The nav therefore looks the same on every page and every project.
+- **Tabs not created yet are shown disabled, not hidden.** The header is a sticky tab bar: numbered tabs 0–5 (Intent grouped apart from the Solution tabs), the open tab filled with the accent and `aria-current`, hover/focus states, and a horizontally scrolling row on phones. A tab whose data file is absent is greyed with a lock and a tooltip "Not created yet", not clickable and not struck through. The bar therefore looks the same on every project.
 
 ## Resolved design points (v0.1 build)
 - Data format: JSON for anything the script reads, Markdown for the intent. Location: `docs/artifact/`.

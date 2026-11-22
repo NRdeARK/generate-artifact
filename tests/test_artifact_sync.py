@@ -1,4 +1,5 @@
 import contextlib
+import html
 import io
 import json
 import os
@@ -6,7 +7,10 @@ import re
 import shutil
 import sys
 import tempfile
+import subprocess
 import unittest
+from unittest import mock
+from urllib.parse import urlparse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -37,6 +41,20 @@ def run_probe(page_html, probe_js, target, size="1200,900"):
     if not found:
         raise AssertionError("probe produced no result: " + done.stderr[-300:])
     return found.group(1)
+
+
+def tab_page(artifact_dir, tab):
+    """build/index.html reduced to one tab: the other sections are cut out, so per-tab assertions stay about that tab."""
+    document = (Path(artifact_dir) / "build" / "index.html").read_text(encoding="utf-8")
+    others = rf'<section class="tab-section[^"]*" id="view-(?!{tab}")[^>]*>.*?</section><!--/tab-section-->\s*'
+    document = re.sub(others, "", document, flags=re.S)
+    return re.sub(rf'(<section class="tab-section)( active)?(" id="view-{tab}")', r"\1 active\3", document)
+
+
+def all_pages(artifact_dir):
+    """{tab: that tab's page} for every section present in build/index.html."""
+    document = (Path(artifact_dir) / "build" / "index.html").read_text(encoding="utf-8")
+    return {tab: tab_page(artifact_dir, tab) for tab in re.findall(r'<section class="tab-section[^"]*" id="view-(\w+)"', document)}
 
 
 def luminance(rgb):
@@ -74,7 +92,7 @@ class FixtureCase(unittest.TestCase):
 
     def codes(self):
         code, out = run("validate", str(self.dir))
-        return code, set(re.findall(r"\[(?:ERROR|WARNING)\] (\S+)", out)), out
+        return code, set(re.findall(r"\[(?:ERROR|WARNING|INFO)\] (\S+)", out)), out
 
 
 class ValidateTests(FixtureCase):
@@ -142,43 +160,129 @@ class RenderTests(FixtureCase):
     def build(self, *extra):
         code, _ = run("render", str(self.dir), *extra)
         self.assertEqual(code, 0)
-        return {p.name: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+        return (self.dir / "build" / "index.html").read_text(encoding="utf-8")
 
-    def test_six_pages_with_nav_toggle_and_theme(self):
-        pages = self.build()
-        self.assertEqual(sorted(pages), ["intent.html"] + [f"tab{n}.html" for n in range(1, 6)])
-        for name, text in pages.items():
-            with self.subTest(page=name):
-                self.assertIn("data-set-lang=\"th\"", text)
-                self.assertIn("ga-lang", text)
-                self.assertIn("--accent: #D97757", text)
-                for number, label in enumerate(("Intent", "Use cases", "Decisions", "Concepts", "UC details", "Components")):
-                    self.assertRegex(text, rf'<span class="tab-num">{number}</span><span class="tab-label"><span data-l="en">{label}</span>')
-                self.assertIn("updated", text)
-                self.assertIn('data-l="th"', text)
+    def test_local_render_writes_index_html_and_fonts_dir_only(self):
+        self.build()
+        self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["fonts", "index.html"])
 
-    def test_titles_follow_naming_convention(self):
-        pages = self.build()
-        self.assertIn("<title>Status Board · 2 Decisions</title>", pages["tab2.html"])
-        self.assertIn("<title>Status Board · 0 Intent</title>", pages["intent.html"])
+    def test_google_render_writes_only_index_html(self):
+        self.build("--fonts", "google")
+        self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["index.html"])
 
-    def test_tab_without_artifact_url_is_disabled_not_hidden(self):
-        self.edit("artifacts.json", lambda d: d["tabs"].pop("tab5"))
-        pages = self.build()
-        for name, text in pages.items():
-            if name == "tab5.html":
-                continue  # the page itself is shown as current, not disabled
-            with self.subTest(page=name):
-                self.assertRegex(text, r'class="tab disabled" aria-disabled="true" tabindex="0" title="Not created yet[^"]*"')
-                self.assertEqual(text.count('class="tab disabled"'), 1)
+    def test_page_is_self_contained_and_offline(self):
+        text = self.build()
+        self.assertEqual(re.findall(r"""<(?:script|link|img|iframe)[^>]*(?:src|href)=["']https?://""", text), [])
+        self.assertNotRegex(text, r"""@import|url\(\s*["']?https?://""")
+        self.assertIn("--accent: #D97757", text)
+        self.assertIn('data-set-lang="th"', text)
+
+    def outside_refs(self, text):
+        """Every absolute URL the page loads: link/script/img/iframe src or href, CSS url(), CSS @import."""
+        tags = re.findall(r"""<(?:script|link|img|iframe)[^>]*(?:src|href)=["'](https?://[^"']+)""", text)
+        css = re.findall(r"""url\(\s*["']?(https?://[^"')\s]+)|@import\s+(?:url\()?["']?(https?://[^"')\s]+)""", text)
+        return tags + [a or b for a, b in css]
+
+    def test_claude_ai_render_loads_only_google_fonts_from_outside(self):
+        text = self.build("--fonts", "google")
+        refs = self.outside_refs(text)
+        self.assertTrue(refs)
+        self.assertEqual({urlparse(r).hostname for r in refs}, {"fonts.googleapis.com"})
+        for family in ("Source+Serif+4", "Inter", "IBM+Plex+Sans+Thai", "Noto+Serif+Thai"):
+            self.assertIn(f"family={family}", refs[0])
+        self.assertNotIn("@font-face", text)
+
+    def test_local_render_copies_fonts_matching_the_url_refs(self):
+        text = self.build()
+        refs = re.findall(r'url\("(fonts/[^"]+\.woff2)"\)', text)
+        self.assertEqual(len(refs), 6)
+        for ref in refs:
+            self.assertTrue((self.dir / "build" / ref).is_file(), ref)
+        self.assertEqual(self.outside_refs(text), [])
+        self.assertEqual(sorted(p.name for p in (self.dir / "build" / "fonts").iterdir()), sorted(Path(r).name for r in refs))
+
+    def test_no_render_embeds_font_data_and_both_keep_system_fallbacks(self):
+        for extra in ((), ("--fonts", "google")):
+            text = self.build(*extra)
+            self.assertNotIn("data:font", text)
+            self.assertRegex(text, r'--font-display:[^;]*"Leelawadee UI", Tahoma, Georgia')
+            self.assertRegex(text, r'--font-body:[^;]*Tahoma, system-ui[^;]*"Segoe UI"')
+
+    def theme(self, css):
+        theme = self.tmp / "t" / "theme.css"
+        theme.parent.mkdir()
+        theme.write_text(css, encoding="utf-8")
+        return str(theme)
+
+    def test_theme_with_path_traversal_is_rejected(self):
+        (self.tmp / "t").mkdir()
+        (self.tmp / "t" / "secret.woff2").write_bytes(b"x")
+        (self.tmp / "t" / "fonts").mkdir()
+        (self.tmp / "t" / "theme.css").write_text('@font-face { font-family: X; src: url("fonts/../secret.woff2"); }', encoding="utf-8")
+        with self.assertRaisesRegex(sync.DataError, r"fonts/\.\./secret\.woff2.*not allowed"):
+            sync.load_theme(str(self.tmp / "t" / "theme.css"))
+
+    def test_theme_with_remote_non_google_url_or_data_uri_is_rejected(self):
+        for ref in ("https://evil.example/f.woff2", "http://fonts.googleapis.com/css", "data:font/woff2;base64,AAAA"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(sync.DataError, "not allowed"):
+                sync.load_theme(self.theme(f'@font-face {{ src: url("{ref}"); }}'))
+            shutil.rmtree(self.tmp / "t")
+        with self.assertRaisesRegex(sync.DataError, "not allowed"):
+            sync.load_theme(self.theme('@import "https://evil.example/x.css";'))
+
+    def test_theme_font_that_does_not_exist_names_the_file(self):
+        with self.assertRaisesRegex(sync.DataError, "nope.woff2"):
+            sync.load_theme(self.theme('@font-face { src: url("fonts/nope.woff2"); }'))
+        self.assertNotEqual(run("render", str(self.dir), "--theme", str(self.tmp / "t" / "theme.css"))[0], 0)
+
+    def test_page_renders_with_toggle_when_thai_is_missing(self):
+        (self.dir / "i18n" / "th.json").unlink()
+        text = self.build()
+        self.assertIn('data-set-lang="th"', text)
+        self.assertIn('data-l="en"', text)
+
+    def test_all_sections_and_numbered_tab_bar_in_one_document(self):
+        text = self.build()
+        self.assertEqual(re.findall(r'<section class="tab-section[^"]*" id="view-(\w+)"', text), ["intent"] + [f"tab{n}" for n in range(1, 6)])
+        nav = text.split('<nav class="nav"')[1].split("</nav>")[0]
+        for number, (tab, label) in enumerate(zip(["intent"] + [f"tab{n}" for n in range(1, 6)], ("Intent", "Use cases", "Decisions", "Concepts", "UC details", "Components"))):
+            self.assertRegex(nav, rf'<a class="tab" href="#{tab}" data-tab="{tab}"><span class="tab-num">{number}</span><span class="tab-label"><span data-l="en">{label}</span>')
+        self.assertNotRegex(text, r'href="[^"#][^"]*\.html')  # no cross-page links
+
+    def test_hash_routing_script_handles_tab_names_and_ids(self):
+        text = self.build()
+        self.assertIn("hashchange", text)
+        self.assertIn('.tab-section', text)
+        self.assertIn("location.hash", text)
+        self.assertEqual(text.count('class="tab-section active"'), 1)
+
+    def test_title_is_the_project_name(self):
+        self.assertIn("<title>Status Board</title>", self.build())
+
+    def test_missing_data_file_gives_disabled_tab_not_hidden(self):
+        (self.dir / "concepts.json").unlink()
+        text = self.build()
+        self.assertEqual(text.count('class="tab disabled"'), 1)
+        self.assertRegex(text, r'class="tab disabled" aria-disabled="true" tabindex="0" title="Not created yet[^"]*"><span class="tab-num">3</span>')
+        self.assertNotIn('id="view-tab3"', text)
+        self.assertNotIn('href="#tab3"', text)  # not clickable
+
+    def test_no_duplicate_element_ids_across_sections(self):
+        ids = re.findall(r'\sid="([^"]+)"', self.build())
+        self.assertEqual(sorted({i for i in ids if ids.count(i) > 1}), [])
+
+    def test_cross_references_are_in_page_hash_links(self):
+        text = self.build()
+        self.assertIn('href="#UC-03"', text)
+        self.assertNotIn("claude.ai", text)
 
     def test_tab4_fragment_toggles_start_off_and_target_the_inline_diagram(self):
-        text = self.build()["tab4.html"]
+        text = self.build()
         self.assertIn('data-target="uc-01" data-kind="bad" aria-pressed="false"', text)
         self.assertRegex(text, r'<g data-block="1" data-y="\d+" data-h="\d+" data-fragment="bad-timeout" data-kind="bad" display="none">')
 
     def test_tab2_has_no_choose_buttons_and_decided_is_collapsed(self):
-        text = self.build()["tab2.html"]
+        text = tab_page(self.dir, "tab2") if self.build() else ""
         content = text.split("<main>")[1].split("</main>")[0]
         self.assertEqual(re.findall(r'<button(?![^>]*class="expand")', content), [])  # only diagram expand buttons
         self.assertRegex(text, r'<details class="card decision " id="D1" >')
@@ -186,23 +290,24 @@ class RenderTests(FixtureCase):
 
     def test_missing_svg_becomes_placeholder_naming_the_file(self):
         (self.dir / "diagrams" / "concept-c1.svg").unlink()
-        self.assertIn("diagrams/concept-c1.svg", self.build()["tab3.html"])
-        self.assertIn("Diagram not found", self.build()["tab3.html"])
+        text = self.build()
+        self.assertIn("diagrams/concept-c1.svg", text)
+        self.assertIn("Diagram not found", text)
 
     def test_diagram_path_outside_project_is_not_embedded(self):
         self.edit("concepts.json", lambda d: d["concepts"][0].update(diagram="../../../../secret.svg"))
-        self.assertIn("Diagram not found", self.build()["tab3.html"])
+        self.assertIn("Diagram not found", self.build())
 
-    def test_tabs_option_and_absent_data_are_skipped(self):
-        (self.dir / "concepts.json").unlink()
-        run("render", str(self.dir))
-        built = sorted(p.name for p in (self.dir / "build").glob("*.html"))
-        self.assertNotIn("tab3.html", built)
-        self.assertEqual(len(built), 5)
+    def test_reused_diagram_gets_unique_ids_with_references_kept_in_step(self):
+        text = self.build()
+        self.assertEqual(text.count('id="arch-L2-after"'), 1)
+        suffix = re.search(r'id="arch-L2-after-(\d+)"', text).group(1)
+        self.assertIn(f'id="arch-L2-after-title-{suffix}"', text)
+        self.assertRegex(text, rf'aria-labelledby="arch-L2-after-title-{suffix}[ "]')
 
     def test_html_escapes_content(self):
         self.edit("concepts.json", lambda d: d["concepts"][0].update(title="<script>alert(1)</script>"))
-        text = self.build()["tab3.html"]
+        text = self.build()
         self.assertNotIn("<script>alert(1)</script>", text)
         self.assertIn("&lt;script&gt;", text)
 
@@ -210,6 +315,35 @@ class RenderTests(FixtureCase):
         code, _ = run("render", str(self.dir), "--dry-run")
         self.assertEqual(code, 0)
         self.assertFalse((self.dir / "build").exists())
+
+    def test_empty_folder_gives_a_clear_error(self):
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        self.assertEqual(run("render", str(empty))[0], 1)
+        self.assertFalse((empty / "build").exists())
+
+
+class OpenTests(FixtureCase):
+    def test_open_prints_file_uri_of_index_html(self):
+        run("render", str(self.dir))
+        code, out = run("open", str(self.dir), "--no-open")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), (self.dir / "build" / "index.html").resolve().as_uri())
+        self.assertTrue(out.startswith("file://"))
+
+    def test_open_before_render_is_a_clear_error(self):
+        code, out = run("open", str(self.dir), "--no-open")
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+
+    def test_open_starts_the_browser_unless_told_not_to(self):
+        from unittest import mock
+        run("render", str(self.dir))
+        with mock.patch.object(sync.webbrowser, "open", return_value=True) as opened:
+            run("open", str(self.dir), "--no-open")
+            opened.assert_not_called()
+            run("open", str(self.dir))
+            opened.assert_called_once()
 
 
 class ExportTests(FixtureCase):
@@ -225,6 +359,173 @@ class ExportTests(FixtureCase):
         self.assertNotRegex(document, r'class="alt \w+" data-group="[^"]+" hidden')
         self.assertRegex(document, r'<details class="card decision " id="D1" open>')
         self.assertNotIn('class="lang"', document)
+
+
+class ExportLanguageTests(FixtureCase):
+    def build_dir(self):
+        return self.dir / "build"
+
+    def test_english_is_the_default_and_files_are_suffixed(self):
+        self.assertEqual(run("export-pdf", str(self.dir))[0], 0)
+        self.assertTrue((self.build_dir() / "artifact-print-en.html").is_file())
+        self.assertFalse((self.build_dir() / "artifact-print-th.html").exists())
+
+    def test_th_print_html_is_thai_active_and_loads_local_fonts(self):
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "th", "--fonts", "local")[0], 0)
+        document = (self.build_dir() / "artifact-print-th.html").read_text(encoding="utf-8")
+        self.assertIn('<html lang="th"', document)
+        self.assertRegex(document, "[ก-๛]{3}")
+        th_title = json.loads((self.dir / "i18n" / "th.json").read_text(encoding="utf-8"))["D1"]["text"]["title"]
+        self.assertIn(th_title, re.sub(r"<script.*?</script>", "", document, flags=re.S), "Thai is in the visible markup, not only embedded data")
+        self.assertIn('url("fonts/ibm-plex-sans-thai-400.woff2")', document)
+        for font in re.findall(r'url\("(fonts/[^"]+)"\)', document):
+            self.assertTrue((self.build_dir() / font).is_file(), font)
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge/Chrome")
+    def test_th_print_page_shows_thai_and_hides_english_in_a_real_browser(self):
+        """Both languages are embedded, so only computed visibility proves the right one is shown."""
+        th = json.loads((self.dir / "i18n" / "th.json").read_text(encoding="utf-8"))["D1"]["text"]["title"]
+        probe = """<script>addEventListener('load', () => {
+          const pairs = [...document.querySelectorAll('span[data-l=th]')].filter(s => s.textContent.trim() === %s)
+            .map(s => [getComputedStyle(s).display, getComputedStyle(s.previousElementSibling).display]);
+          document.body.setAttribute('data-probe', JSON.stringify(pairs));
+        });</script>""" % json.dumps(th, ensure_ascii=False)
+        for lang, shown, hidden in (("th", "inline", "none"), ("en", "none", "inline")):
+            with self.subTest(lang=lang):
+                self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang)[0], 0)
+                page = self.build_dir() / f"artifact-print-{lang}.html"
+                probed = self.build_dir() / f"probe-{lang}.html"
+                probed.write_text(page.read_text(encoding="utf-8").replace("</body>", probe + "</body>"), encoding="utf-8")
+                done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--dump-dom", probed.resolve().as_uri()],
+                                      capture_output=True, text=True, encoding="utf-8", timeout=120)
+                self.assertEqual(done.returncode, 0, f"browser exited {done.returncode}: {done.stderr[-300:]}")
+                match = re.search(r'data-probe="([^"]*)"', done.stdout)
+                self.assertIsNotNone(match, f"data-probe missing from the dumped page: {done.stderr[-300:]}")
+                pairs = json.loads(html.unescape(match.group(1)))
+                self.assertTrue(pairs, "the Thai title span exists")
+                for thai_display, english_display in pairs:
+                    self.assertEqual((thai_display, english_display), (shown, hidden))
+
+    def test_both_writes_one_print_page_per_language_and_pdfs_when_a_browser_exists(self):
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "both")[0], 0)
+        for lang in ("en", "th"):
+            document = (self.build_dir() / f"artifact-print-{lang}.html").read_text(encoding="utf-8")
+            self.assertIn(f'<html lang="{lang}"', document)
+            if sync.find_browser():
+                self.assertGreater((self.build_dir() / f"artifact-{lang}.pdf").stat().st_size, 10_000)
+
+    def test_missing_thai_blocks_th_and_both_and_names_the_keys(self):
+        self.edit("i18n/th.json", lambda d: d.pop("C1"))
+        for lang in ("th", "both"):
+            with self.subTest(lang=lang), self.assertLogs(sync.log, "ERROR") as logs:
+                self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang)[0], 1)
+            self.assertRegex(logs.output[0], r"Thai PDF refused.*C1.*(i18n-diff|translate)")
+            self.assertFalse(self.build_dir().exists())
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "en")[0], 0, "English still exports")
+
+
+class BlankThaiTests(FixtureCase):
+    """A Thai value that is blank, null or the wrong type counts as missing everywhere (th_status is shared)."""
+    BLANKS = ("", "   ", None, 7, [])
+
+    def blank_c1(self, value):
+        def edit(d):
+            path = next(iter(d["C1"]["text"]))
+            d["C1"]["text"][path] = value
+        self.edit("i18n/th.json", edit)
+
+    def test_blank_values_are_missing_in_validate_and_i18n_diff(self):
+        for value in self.BLANKS:
+            with self.subTest(value=value):
+                self.blank_c1(value)
+                self.assertIn("th-missing", self.codes()[1])
+                entries = {e["key"]: e["status"] for e in json.loads(run("i18n-diff", str(self.dir))[1])}
+                self.assertEqual(entries.get("C1"), "missing")
+
+    def test_blank_values_block_th_and_both_before_any_output_is_written(self):
+        for value in self.BLANKS:
+            for lang in ("th", "both"):
+                with self.subTest(value=value, lang=lang), self.assertLogs(sync.log, "ERROR") as logs:
+                    self.blank_c1(value)
+                    self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang, "--dry-run")[0], 1)
+                    self.assertRegex(logs.output[0], r"Thai PDF refused.*C1")
+        self.assertFalse((self.dir / "build").exists())
+
+    def test_thai_entry_that_is_not_an_object_is_missing(self):
+        self.edit("i18n/th.json", lambda d: d.update(C1="oops"))
+        self.assertIn("th-missing", self.codes()[1])
+
+    def test_blank_english_field_needs_no_thai(self):
+        self.edit("concepts.json", lambda d: d["concepts"][0].update(summary=""))
+        self.edit("i18n/th.json", lambda d: d["C1"]["text"].pop("summary", None))
+        entries = {e["key"]: e["status"] for e in json.loads(run("i18n-diff", str(self.dir))[1])}
+        self.assertNotEqual(entries.get("C1"), "missing")
+
+
+class PdfConversionTests(FixtureCase):
+    """The PDF is written aside and moved into place only after a successful conversion."""
+    def export(self, fake_run, lang="en"):
+        real_run = subprocess.run
+
+        def only_browser(cmd, **kw):  # git calls made while rendering stay real
+            return fake_run(cmd, **kw) if cmd[0] == "browser" else real_run(cmd, **kw)
+        with mock.patch.object(sync, "find_browser", return_value="browser"), mock.patch.object(sync.subprocess, "run", only_browser):
+            return run("export-pdf", str(self.dir), "--lang", lang)[0]
+
+    @staticmethod
+    def ok_run(cmd, **kw):
+        target = next(a for a in cmd if a.startswith("--print-to-pdf=")).split("=", 1)[1]
+        Path(target).write_bytes(b"%PDF-new")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    @staticmethod
+    def failing_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "boom")
+
+    @staticmethod
+    def timeout_run(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 120)
+
+    def old_pdf(self, lang="en"):
+        (self.dir / "build").mkdir(exist_ok=True)
+        path = self.dir / "build" / f"artifact-{lang}.pdf"
+        path.write_bytes(b"%PDF-old")
+        return path
+
+    def test_success_replaces_the_old_pdf_and_leaves_no_temp_file(self):
+        pdf = self.old_pdf()
+        self.assertEqual(self.export(self.ok_run), 0)
+        self.assertEqual(pdf.read_bytes(), b"%PDF-new")
+        self.assertEqual(list((self.dir / "build").glob("*.tmp")), [])
+
+    def test_failed_conversion_is_an_error_and_keeps_the_old_pdf(self):
+        pdf = self.old_pdf()
+        with self.assertLogs(sync.log, "ERROR") as logs:
+            self.assertEqual(self.export(self.failing_run), 1)
+        self.assertRegex("\n".join(logs.output), r"PDF conversion failed \(exit 1: boom\)")
+        self.assertEqual(pdf.read_bytes(), b"%PDF-old")
+
+    def test_timeout_is_reported_not_raised(self):
+        self.old_pdf()
+        with self.assertLogs(sync.log, "ERROR") as logs:
+            self.assertEqual(self.export(self.timeout_run), 1)
+        self.assertIn("timed out", "\n".join(logs.output))
+
+    def test_exit_zero_without_output_is_a_failure(self):
+        with self.assertLogs(sync.log, "ERROR"):
+            self.assertEqual(self.export(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")), 1)
+
+    def test_both_second_failure_does_not_count_the_old_file_as_success(self):
+        old_th = self.old_pdf("th")
+        calls = []
+
+        def run_once(cmd, **kw):
+            calls.append(cmd)
+            return self.ok_run(cmd) if len(calls) == 1 else self.failing_run(cmd)
+        with self.assertLogs(sync.log, "ERROR"):
+            self.assertEqual(self.export(run_once, "both"), 1)
+        self.assertEqual((self.dir / "build" / "artifact-en.pdf").read_bytes(), b"%PDF-new")
+        self.assertEqual(old_th.read_bytes(), b"%PDF-old")
 
 
 class I18nTests(FixtureCase):
@@ -246,7 +547,7 @@ class ReviewRegressionTests(FixtureCase):
     """One test per REVIEW_CODEX.md finding (F1-F8) and per extra spec gap (GA-GD)."""
 
     def render_text(self, tab):
-        run("render", str(self.dir), "--tabs", tab)
+        run("render", str(self.dir))
         path = self.dir / "build" / f"{tab}.html"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
@@ -257,10 +558,8 @@ class ReviewRegressionTests(FixtureCase):
         self.assertIn("bad-id", self.codes()[1])
 
     def test_f2_non_https_url_is_not_linked_and_is_an_error(self):
-        self.edit("artifacts.json", lambda d: d["tabs"]["tab2"].update(url="javascript:alert(1)"))
-        text = self.render_text("intent")
-        self.assertNotIn("javascript:", text)
-        self.assertRegex(text, r'class="tab disabled"[^>]*>(?:<span[^>]*>)*2<')
+        self.edit("artifacts.json", lambda d: d["publish"]["claude-ai"].update(url="javascript:alert(1)"))
+        self.assertNotIn("javascript:", self.render_text("intent"))
         code, codes, _ = self.codes()
         self.assertEqual(code, 1)
         self.assertIn("bad-url", codes)
@@ -313,9 +612,11 @@ class ReviewRegressionTests(FixtureCase):
         document = sync.Site(project, print_mode=True).print_document(sync.present_tabs(self.dir))
         self.assertEqual(re.findall(r"<details(?![^>]*\bopen\b)[^>]*>", document), [])
 
-    def test_f8_skill_commits_before_rendering(self):
-        steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 5. Publish loop")[1].split("## 6.")[0]
-        self.assertLess(steps.index("**Commit**"), steps.index("artifact_sync.py render"))
+    def test_stage_loop_order_is_validate_commit_render_publish(self):
+        steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 6. Stage loop")[1].split("## 7.")[0]
+        order = [steps.index(k) for k in ("i18n-diff", "artifact_sync.py validate", "**Commit**", "artifact_sync.py render", "**Publish**", "`publish.<adapter>")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("republish the others", steps)
 
     def test_ga_affected_cause_must_be_a_changing_component(self):
         self.edit("usecases.json", lambda d: d["ucs"][2].update(caused_by="CMP-API"))
@@ -332,8 +633,8 @@ class ReviewRegressionTests(FixtureCase):
     def test_gc_theme_flag_selects_theme_file(self):
         theme = self.tmp / "mine.css"
         theme.write_text(":root { --accent: #123456; }", encoding="utf-8")
-        run("render", str(self.dir), "--theme", str(theme), "--tabs", "tab1")
-        text = (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+        run("render", str(self.dir), "--theme", str(theme))
+        text = tab_page(self.dir, "tab1")
         self.assertIn("--accent: #123456", text)
         self.assertNotIn("--accent: #D97757", text)
         self.assertEqual(run("render", str(self.dir), "--theme", "no-such-theme")[0], 2)
@@ -344,15 +645,15 @@ class SecondReviewRegressionTests(FixtureCase):
     """One test per item in REVIEW_CODEX_2.md (N1-N3, F3 partial, F5 partial), using the report's payloads."""
 
     def set_url(self, url):
-        self.edit("artifacts.json", lambda d: d["tabs"]["tab2"].update(url=url))
+        self.edit("artifacts.json", lambda d: d["publish"]["claude-ai"].update(url=url))
 
     def test_n1_backslash_authority_bypass_is_rejected(self):
         self.set_url("https://evil.example\\@claude.ai/a")
         code, codes, _ = self.codes()
         self.assertEqual(code, 1)
         self.assertIn("bad-url", codes)
-        run("render", str(self.dir), "--tabs", "intent")
-        self.assertNotIn("evil.example", (self.dir / "build" / "intent.html").read_text(encoding="utf-8"))
+        run("render", str(self.dir))
+        self.assertNotIn("evil.example", tab_page(self.dir, "intent"))
 
     def test_n1_other_url_forms_are_rejected(self):
         for url in ("https://user:pw@claude.ai/a", "https://claude.ai:8443/a", "https://claude.ai\t/a",
@@ -366,7 +667,7 @@ class SecondReviewRegressionTests(FixtureCase):
         code, codes, _ = self.codes()
         self.assertEqual(code, 1)
         self.assertIn("bad-url", codes)
-        self.assertEqual(run("render", str(self.dir), "--tabs", "intent")[0], 0)
+        self.assertEqual(run("render", str(self.dir))[0], 0)
 
     def test_n3_waiver_reasons_must_be_nonblank_text(self):
         for bad in (True, ["x"], {"a": 1}, "   ", 1):
@@ -435,7 +736,7 @@ class DiagramTests(unittest.TestCase):
     def test_skill_requires_diagram_design_and_forbids_placeholders(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("diagram-design:diagram-design", text)
-        self.assertIn("docs/artifact/diagrams/<name>.svg", text)
+        self.assertIn("diagrams/<name>.svg", text)
         self.assertIn("Never hand-draw placeholder", text)
 
 
@@ -443,8 +744,8 @@ class ArchViewTests(FixtureCase):
     """Before/after data-flow diagrams per C4 level (Tab 5 and the Tab 1 overview)."""
 
     def page(self, tab):
-        run("render", str(self.dir), "--tabs", tab)
-        return (self.dir / "build" / f"{tab}.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, tab)
 
     def test_each_overview_level_gets_a_diagram_pair_and_a_switch(self):
         for tab, figures in (("tab5", 21), ("tab1", 5)):
@@ -503,8 +804,8 @@ class Tab1LayoutTests(FixtureCase):
 
 class Tab1OutcomeTests(FixtureCase):
     def page(self):
-        run("render", str(self.dir), "--tabs", "tab1")
-        return (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab1")
 
     def test_outcome_banner_tree_diagram_and_uc_table(self):
         text = self.page()
@@ -519,7 +820,7 @@ class Tab1OutcomeTests(FixtureCase):
         self.assertNotIn("Plain-words", table)
         row = next(r for r in table.split("<tr>") if "UC-03" in r)
         self.assertIn("Projects DB", row)
-        self.assertIn("PLACEHOLDER-tab4#UC-03", table)
+        self.assertIn("#UC-03", table)
 
     def test_main_and_affected_rows_are_styled_differently(self):
         table = self.page().split('<table class="uc-table">')[1]
@@ -534,15 +835,15 @@ class Tab1OutcomeTests(FixtureCase):
 
 class TabBarTests(FixtureCase):
     def page(self, tab="tab2"):
-        run("render", str(self.dir), "--tabs", tab)
-        return (self.dir / "build" / f"{tab}.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, tab)
 
-    def test_numbered_tabs_current_marked_and_grouped(self):
+    def test_numbered_tabs_grouped_and_current_marked_by_the_router(self):
         text = self.page("tab2")
         nav = text.split('<nav class="nav"')[1].split("</nav>")[0]
         self.assertEqual(re.findall(r'<span class="tab-num">(\d)</span>', nav), list("012345"))
-        self.assertEqual(nav.count('aria-current="page"'), 1)
-        self.assertRegex(nav, r'class="tab current" aria-current="page"><span class="tab-num">2</span>')
+        self.assertEqual(len(re.findall(r'<a class="tab" href="#tab\d" data-tab="tab\d">', nav)), 5)
+        self.assertIn('setAttribute("aria-current", "page")', text)  # the router marks the open tab
         self.assertIn('class="nav-divider"', nav)
         intent_group, solution_group = nav.split('class="nav-divider"')
         self.assertIn('<span class="tab-num">0</span>', intent_group)
@@ -550,7 +851,7 @@ class TabBarTests(FixtureCase):
         self.assertEqual(len(re.findall(r'class="tab-num"', solution_group)), 5)
 
     def test_disabled_tab_has_lock_and_tooltip_not_strikethrough(self):
-        self.edit("artifacts.json", lambda d: d["tabs"].pop("tab5"))
+        (self.dir / "registry.json").unlink()
         text = self.page("tab2")
         disabled = re.search(r'<span class="tab disabled".*?</svg></span>', text, re.S).group(0)
         self.assertIn("tab-lock", disabled)
@@ -571,7 +872,7 @@ class TabBarTests(FixtureCase):
 class DiagramViewerTests(FixtureCase):
     def pages(self):
         run("render", str(self.dir))
-        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+        return all_pages(self.dir)
 
     def test_every_diagram_has_a_real_expand_button(self):
         for name, text in self.pages().items():
@@ -638,8 +939,8 @@ btn.click(); stage.dispatchEvent(new MouseEvent('click',{bubbles:true})); out.pu
 
 class ConceptIndexTests(FixtureCase):
     def page(self):
-        run("render", str(self.dir), "--tabs", "tab3")
-        return (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab3")
 
     def test_chips_replaced_by_a_side_index_with_id_title_and_kind(self):
         text = self.page()
@@ -736,7 +1037,7 @@ class SvgSanitizerTests(unittest.TestCase):
 class InlineDiagramTests(FixtureCase):
     def pages(self):
         run("render", str(self.dir))
-        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+        return all_pages(self.dir)
 
     def test_diagrams_are_inline_svg_not_images(self):
         for name, text in self.pages().items():
@@ -752,8 +1053,8 @@ class InlineDiagramTests(FixtureCase):
         code, codes, out = self.codes()
         self.assertEqual(code, 1)
         self.assertIn("unsafe-svg", codes)
-        run("render", str(self.dir), "--tabs", "tab3")
-        page = (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        page = tab_page(self.dir, "tab3")
         self.assertNotIn("alert(1)", page)
         self.assertNotIn("onclick", page)
 
@@ -767,14 +1068,14 @@ class InlineDiagramTests(FixtureCase):
     def test_invalid_svg_xml_is_an_error_and_a_placeholder(self):
         (self.dir / "diagrams" / "concept-c1.svg").write_text("<svg", encoding="utf-8")
         self.assertIn("unsafe-svg", self.codes()[1])
-        run("render", str(self.dir), "--tabs", "tab3")
-        self.assertIn("Diagram not found", (self.dir / "build" / "tab3.html").read_text(encoding="utf-8"))
+        run("render", str(self.dir))
+        self.assertIn("Diagram not found", tab_page(self.dir, "tab3"))
 
 
 class UcFragmentTests(FixtureCase):
     def tab4(self):
-        run("render", str(self.dir), "--tabs", "tab4")
-        return (self.dir / "build" / "tab4.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab4")
 
     def test_one_diagram_per_uc_with_every_flow_as_a_hidden_fragment(self):
         text = self.tab4()
@@ -845,8 +1146,8 @@ var lines=svg.querySelectorAll('[data-lifeline]'); out.push('lifelines='+(+lines
 
 class ContainerL3Tests(FixtureCase):
     def tab5(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab5")
 
     def test_overview_switch_offers_l1_and_l2_only(self):
         text = self.tab5()
@@ -893,8 +1194,8 @@ class ContainerL3Tests(FixtureCase):
 
 class ComponentDiagramTests(FixtureCase):
     def tab5(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab5")
 
     def card(self, text, cid):
         return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
@@ -951,8 +1252,8 @@ class ComponentDiagramTests(FixtureCase):
 
 class PairCompareTests(FixtureCase):
     def tab5(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab5")
 
     def test_every_pair_has_an_expand_both_button_and_print_has_none(self):
         text = self.tab5()
@@ -1025,8 +1326,8 @@ var one=document.querySelector('.diagram .expand'); one.click(); out.push('singl
 
 class CompareLayoutToggleTests(FixtureCase):
     def tab5(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        return (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab5")
 
     def test_segmented_layout_control_markup_and_labels(self):
         text = self.tab5()
@@ -1072,8 +1373,8 @@ var one=document.querySelector('.diagram .expand'); one.click(); out.push('singl
 
 class ConceptPlainTests(FixtureCase):
     def tab3(self):
-        run("render", str(self.dir), "--tabs", "tab3")
-        return (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab3")
 
     def block(self, cid="C1"):
         return self.tab3().split(f'<article class="card blk" id="{cid}">')[1].split("</article>")[0]
@@ -1141,8 +1442,8 @@ class OptionCardContrastTests(FixtureCase):
 
     @unittest.skipUnless(sync.find_browser(), "needs headless Edge or Chrome")
     def test_in_browser_every_option_state_and_badge_has_readable_contrast(self):
-        run("render", str(self.dir), "--tabs", "tab2")
-        page = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        page = tab_page(self.dir, "tab2")
         probe = """function bg(el){while(el){var c=getComputedStyle(el).backgroundColor; if(c&&c!=='rgba(0, 0, 0, 0)'&&c!=='transparent')return c; el=el.parentElement} return 'rgb(255, 255, 255)'}
 document.querySelectorAll('details.decision').forEach(function(d){d.open=true});
 document.querySelectorAll('.opt, .opt .badge').forEach(function(el){
@@ -1165,8 +1466,8 @@ class LayoutRuleTests(FixtureCase):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertRegex(css, r"\.blk \{ display: flex; flex-direction: column;")
         self.assertRegex(css, r"\.blk \.tx \{[^}]*max-width: 70ch")
-        run("render", str(self.dir), "--tabs", "tab3")
-        text = (self.dir / "build" / "tab3.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab3")
         block = text.split('<article class="card blk" id="C1">')[1].split("</article>")[0]
         self.assertLess(block.index("<header"), block.index('<div class="dg">'))
         self.assertLess(block.index('<div class="dg">'), block.index('<div class="tx">'))
@@ -1180,15 +1481,15 @@ class LayoutRuleTests(FixtureCase):
     def test_decision_option_grid_is_at_least_280px_and_wireframes_are_expandable(self):
         css = (SKILL / "templates" / "base.css").read_text(encoding="utf-8")
         self.assertIn("minmax(280px, 1fr)); gap: 12px; margin: 10px 0; }", css)
-        run("render", str(self.dir), "--tabs", "tab2")
-        text = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab2")
         d3 = text.split('id="D3"')[1]
         self.assertGreaterEqual(d3.count('class="expand"'), 2)
 
 class FilesChangedTests(FixtureCase):
     def card(self, cid):
-        run("render", str(self.dir), "--tabs", "tab5")
-        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab5")
         return re.search(rf'<details class="card comp \w+" id="{cid}"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
 
     def test_summary_line_counts_each_change_type(self):
@@ -1244,8 +1545,8 @@ class FilesChangedTests(FixtureCase):
 
 class DataDictionaryTests(FixtureCase):
     def db_card(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab5")
         return re.search(r'<details class="card comp \w+" id="CMP-DB"[^>]*>.*?</details>\s*(?:<details class="card comp|</section>)', text, re.S).group(0)
 
     def test_one_collapsed_dictionary_per_new_or_changed_table_under_the_migration_table(self):
@@ -1285,8 +1586,8 @@ class DataDictionaryTests(FixtureCase):
         self.assertIn("<th>changed_by</th>", tables[1])
 
     def test_thai_meanings_but_samples_stay_data(self):
-        run("render", str(self.dir), "--tabs", "tab5")
-        text = (self.dir / "build" / "tab5.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab5")
         self.assertIn("งานเป็นไปตามแผน", text)
         entries = sync.content_entries(sync.load_project(self.dir))["CMP-DB"]
         self.assertTrue(any(path.endswith("values.0.meaning") for path in entries))
@@ -1390,7 +1691,7 @@ class BrowserCdpTests(unittest.TestCase):
 class MobileTableTests(FixtureCase):
     def pages(self):
         run("render", str(self.dir))
-        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+        return all_pages(self.dir)
 
     def test_every_table_on_every_page_sits_in_a_scroll_box(self):
         for name, text in self.pages().items():
@@ -1430,7 +1731,7 @@ class MobileTableTests(FixtureCase):
 class FlipTableTests(FixtureCase):
     def pages(self):
         run("render", str(self.dir))
-        return {p.stem: p.read_text(encoding="utf-8") for p in (self.dir / "build").glob("*.html")}
+        return all_pages(self.dir)
 
     def test_every_key_table_is_rendered_three_ways_from_the_same_rows(self):
         pages = self.pages()
@@ -1480,8 +1781,8 @@ class FlipTableTests(FixtureCase):
 
 class ItemNameFirstTests(FixtureCase):
     def tab(self, name):
-        run("render", str(self.dir), "--tabs", name)
-        return (self.dir / "build" / f"{name}.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, name)
 
     def plain(self, markup):
         return en_plain(markup)
@@ -1492,7 +1793,7 @@ class ItemNameFirstTests(FixtureCase):
         heads = re.findall(r"<th>(.*?)</th>", table, re.S)
         self.assertEqual([self.plain(h) for h in heads[: 4]][0:1], ["Use case"])
         self.assertEqual(len(heads), 4)  # Use case | Tier | Description | Traced from (no ID, no Details column)
-        self.assertRegex(table, r'<a class="uc-link" href="https://claude\.ai/artifact/PLACEHOLDER-tab4#UC-01"><span class="ref-id">UC-01</span> · <strong>')
+        self.assertRegex(table, r'<a class="uc-link" href="#UC-01"><span class="ref-id">UC-01</span> · <strong>')
         self.assertIn("View project status", table)
         self.assertNotIn("Plain-words summary", text)
         self.assertNotIn("Open in Tab 4</a></td>", table)  # the name links to Tab 4; no Details column
@@ -1584,10 +1885,10 @@ class StickyLabelColumnTests(FixtureCase):
 
 class HeaderTests(FixtureCase):
     def test_tab2_header_has_no_status_or_count_badge(self):
-        run("render", str(self.dir), "--tabs", "tab2")
-        text = (self.dir / "build" / "tab2.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        text = tab_page(self.dir, "tab2")
         header = text.split('<header class="top">')[1].split("</header>")[0]
-        self.assertEqual(header.count('class="pill"'), 1)  # only the "Solution" label
+        self.assertEqual(header.count('class="pill"'), 0)
         self.assertNotRegex(en_plain(header), r"\d+ (open|decided)")
         en = json.loads((SKILL / "i18n" / "en.json").read_text(encoding="utf-8"))
         th = json.loads((SKILL / "i18n" / "th.json").read_text(encoding="utf-8"))
@@ -1611,8 +1912,8 @@ class HeaderTests(FixtureCase):
 
 class CrudTableTests(FixtureCase):
     def tab1(self):
-        run("render", str(self.dir), "--tabs", "tab1")
-        return (self.dir / "build" / "tab1.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab1")
 
     def sets(self, text):
         return re.search(r'<div class="tblset tblset-crud-table">.*?<div class="item-cards">.*?</div>\s*</div>', text, re.S).group(0)
@@ -1631,7 +1932,7 @@ class CrudTableTests(FixtureCase):
     def test_cells_show_uc_name_links_and_muted_n_a_reasons(self):
         block = self.sets(self.tab1())
         table = re.search(r'<table class="crud-table">.*?</table>', block, re.S).group(0)
-        self.assertRegex(table, r'<a class="uc-link" href="https://claude\.ai/artifact/PLACEHOLDER-tab4#UC-02"><span class="ref-id">UC-02</span> · <strong>')
+        self.assertRegex(table, r'<a class="uc-link" href="#UC-02"><span class="ref-id">UC-02</span> · <strong>')
         self.assertIn("Update a project's status", en_plain(table))
         self.assertRegex(table, r'<td class="na"><span class="badge unchanged">n/a</span> <em class="na-reason">rows only gain a status timestamp</em></td>')
 
@@ -1669,8 +1970,8 @@ class CrudTableTests(FixtureCase):
 
 class StepChangeTests(FixtureCase):
     def tab4(self):
-        run("render", str(self.dir), "--tabs", "tab4")
-        return (self.dir / "build" / "tab4.html").read_text(encoding="utf-8")
+        run("render", str(self.dir))
+        return tab_page(self.dir, "tab4")
 
     def uc_svg(self, text, uid):
         return re.search(rf'<svg[^>]*id="{uid.lower()}".*?</svg>', text, re.S).group(0)
@@ -1778,6 +2079,321 @@ class StepChangeTests(FixtureCase):
         for needle in ("step_changes", "data-step", "added", "changed"):
             self.assertIn(needle, solution)
         self.assertIn("step_changes", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
+
+class LegacyArtifactsTests(FixtureCase):
+    """artifacts.json written by the six-page version: tabs.* is kept as-is, listed in a warning, never an error."""
+
+    LEGACY = """{
+  "project": "Status Board",
+  "tabs": {
+    "intent": {"slug": "old-intent", "url": "https://claude.ai/artifact/old-intent", "version": "v3"},
+    "tab1": {"slug": "old-tab1", "url": "https://claude.ai/artifact/old-tab1", "version": "v7"}
+  }
+}
+"""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.dir / "artifacts.json"
+        self.path.write_bytes(self.LEGACY.encode("utf-8"))
+
+    def test_legacy_tabs_are_info_not_an_error(self):
+        code, codes, out = self.codes()
+        self.assertEqual(code, 0)
+        self.assertIn("legacy-tabs", codes)
+        self.assertIn("intent, tab1", out)
+
+    def test_no_command_rewrites_legacy_tabs(self):
+        for argv in (("validate",), ("render",), ("open", "--no-open"), ("export-pdf", "--dry-run"), ("i18n-diff",)):
+            with self.subTest(command=argv[0]):
+                run(argv[0], str(self.dir), *argv[1:])
+                self.assertEqual(self.path.read_bytes(), self.LEGACY.encode("utf-8"))
+
+    def test_new_publish_entry_is_validated_next_to_legacy_tabs(self):
+        self.edit("artifacts.json", lambda d: d.update(adapter="local", publish={"local": {"id": "build/index.html", "url": "file:///x/build/index.html"}}))
+        code, codes, _ = self.codes()
+        self.assertEqual((code, "legacy-tabs" in codes), (0, True))
+        self.edit("artifacts.json", lambda d: d["publish"].update({"claude-ai": {"id": "abc"}}))
+        self.assertIn("bad-publish", self.codes()[1])
+
+    def test_sample_project_uses_the_new_shape_only(self):
+        data = json.loads((FIXTURE / "artifacts.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(data), ["adapter", "project", "publish"])
+        self.assertEqual(sorted(data["publish"][data["adapter"]]), ["id", "url"])
+
+
+class RuntimeNeutralTests(unittest.TestCase):
+    """Runtime names may only appear in a 'Runtime notes' section, or in adapters/claude-ai.md."""
+
+    FILES = ["SKILL.md", "solution.md", "intent.md", "adapters/README.md", "adapters/local.md"]
+    WORDS = re.compile(r"claude|sonnet|opus|haiku", re.I)
+
+    def outside_runtime_notes(self, text):
+        kept, inside = [], False
+        for line in text.splitlines():
+            if line.startswith("#"):
+                inside = line.lstrip("# ").strip().lower() == "runtime notes"
+            if not inside:
+                kept.append(line)
+        return kept
+
+    def test_runtime_words_only_inside_runtime_notes(self):
+        for name in self.FILES:
+            with self.subTest(file=name):
+                text = (SKILL / name).read_text(encoding="utf-8")
+                self.assertEqual([l for l in self.outside_runtime_notes(text) if self.WORDS.search(l)], [])
+
+    def test_skill_has_runtime_notes_and_stays_short(self):
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## Runtime notes", text)
+        self.assertLessEqual(len(text.splitlines()), 100)
+
+    def test_adapter_files_exist_and_claude_ai_keeps_the_sharing_warning(self):
+        self.assertEqual(sorted(p.name for p in (SKILL / "adapters").iterdir()), ["README.md", "claude-ai.md", "local.md"])
+        claude_ai = (SKILL / "adapters" / "claude-ai.md").read_text(encoding="utf-8")
+        for needle in ("Tab 4 and Tab 5 code details", "publish_files", "get_artifact", "shared_live", "https://claude.ai/", "only by the user"):
+            self.assertIn(needle, claude_ai)
+        self.assertIn("Tab 4 and Tab 5 code details", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_skill_has_no_publish_tool_steps_left(self):
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        for needle in ("publish_files", "get_artifact", "shared_live", "create_from_type"):
+            self.assertNotIn(needle, text)
+        adapters = (SKILL / "adapters" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Selection order", adapters)
+        self.assertIn("{adapter, id, url}", adapters)
+
+
+class BigProjectCheckTests(FixtureCase):
+    """New validate checks: UC size, infra participants, arrow labels, call sites. Each code: one silent case, one firing case."""
+
+    def setUp(self):
+        super().setUp()
+        self.proj = self.tmp / "proj"  # repo layout: <root>/docs/artifact, so call sites resolve against <root>
+        shutil.copytree(FIXTURE.parent.parent, self.proj, ignore=shutil.ignore_patterns("build"))
+        self.dir = self.proj / "docs" / "artifact"
+
+    def edit_uc(self, uid, change):
+        self.edit("usecases.json", lambda d: change(next(u for u in d["ucs"] if u["id"] == uid)))
+
+    def found(self, code):
+        return code in self.codes()[1]
+
+    def test_sample_project_has_none_of_the_new_codes(self):
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(found & {"uc-too-large", "infra-participant-missing", "label-format", "label-too-detailed",
+                                  "arrow-no-callsite", "callsite-missing"}, out)
+
+    def test_uc_too_large_fires_on_13_steps_and_7_participants(self):
+        self.edit_uc("UC-01", lambda u: u.update(steps=[{"id": str(i), "label": "[CALL] Do it"} for i in range(12)]))
+        self.assertFalse(self.found("uc-too-large"))  # exactly 12 is fine
+        self.edit_uc("UC-01", lambda u: u["steps"].append({"id": "13", "label": "[CALL] Do it"}))
+        self.assertTrue(self.found("uc-too-large"))
+        self.assertIn("Split it into smaller UCs", self.codes()[2])
+
+    def test_uc_too_large_fires_on_7_participants(self):
+        self.edit_uc("UC-02", lambda u: u.update(components=["CMP-WEB", "CMP-API", "CMP-QUEUE", "CMP-AGG", "CMP-DB", "CMP-EMAIL"]))
+        self.assertFalse(self.found("uc-too-large"))  # 6 is fine
+        self.edit_uc("UC-02", lambda u: u["components"].append("CMP-SYS"))
+        self.assertTrue(self.found("uc-too-large"))
+
+    def test_infra_participant_missing_fires_when_db_is_left_out(self):
+        self.assertFalse(self.found("infra-participant-missing"))
+        self.edit_uc("UC-03", lambda u: u.update(components=["CMP-CRON", "CMP-AGG"]))  # steps still talk to CMP-DB
+        code, found, out = self.codes()
+        self.assertIn("infra-participant-missing", found)
+        self.assertIn("CMP-DB", out)
+
+    def test_infra_participant_missing_fires_when_diagram_drops_the_lifeline(self):
+        svg = self.dir / "diagrams" / "uc-03.svg"
+        svg.write_text(svg.read_text(encoding="utf-8").replace("Projects DB", "Store"), encoding="utf-8")
+        self.assertTrue(self.found("infra-participant-missing"))
+
+    def test_label_format_needs_a_known_tag_then_an_action(self):
+        self.assertFalse(self.found("label-format"))
+        for bad in ("Fetch status", "[HTTP] Fetch status", "[REST]", "REST Fetch status"):
+            self.edit_uc("UC-02", lambda u, bad=bad: u["steps"][0].update(label=bad))
+            self.assertTrue(self.found("label-format"), bad)
+
+    def test_label_too_detailed_flags_method_path_and_sql(self):
+        self.assertFalse(self.found("label-too-detailed"))
+        for bad in ("[REST] GET status", "[REST] Fetch /api/status", "[SQL] SELECT id FROM status",
+                    "[SQL] UPDATE status SET x = 1", "[SQL] DELETE FROM status"):
+            self.edit_uc("UC-02", lambda u, bad=bad: u["steps"][0].update(label=bad))
+            self.assertTrue(self.found("label-too-detailed"), bad)
+
+    def test_arrow_no_callsite_fires_for_code_and_mixed_but_not_draft(self):
+        self.edit_uc("UC-02", lambda u: u["steps"][0].pop("call", None))  # UC-02 is draft: exempt
+        self.assertFalse(self.found("arrow-no-callsite"))
+        self.edit_uc("UC-01", lambda u: u["steps"][0].pop("call"))  # mixed
+        self.assertTrue(self.found("arrow-no-callsite"))
+        self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/api/projects.ts:2"))
+        self.edit_uc("UC-03", lambda u: u["steps"][0].pop("call"))  # code
+        self.assertTrue(self.found("arrow-no-callsite"))
+
+    def test_callsite_missing_for_missing_file_late_line_and_docs(self):
+        self.assertFalse(self.found("callsite-missing"))
+        for bad in ("web/src/nope.ts:1", "web/src/api/projects.ts:999", "../outside.ts:1", "docs/artifact/intent.md:1"):
+            self.edit_uc("UC-01", lambda u, bad=bad: u["steps"][0].update(call=bad))
+            self.assertTrue(self.found("callsite-missing"), bad)
+
+    def test_callsite_check_is_skipped_when_repo_root_is_unknown(self):
+        loose = self.tmp / "loose"  # not under docs/, so no repo root
+        shutil.copytree(self.dir, loose)
+        self.dir = loose
+        self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/nope.ts:1"))
+        self.assertFalse(self.found("callsite-missing"))
+
+
+class ProgressAndStepsTests(FixtureCase):
+    def write_progress(self, **data):
+        (self.dir / "progress.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_sample_progress_is_valid(self):
+        self.assertTrue((self.dir / "progress.json").is_file())
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("bad-progress", found)
+
+    def test_valid_progress_with_skipped_passes(self):
+        self.write_progress(mode="auto", approved=["intent", "tab1"], skipped=["tab3"])
+        code, found, out = self.codes()
+        self.assertEqual((code, "bad-progress" in found), (0, False), out)
+
+    def test_unknown_stage_name_is_an_error(self):
+        self.write_progress(mode="step", approved=["intent", "tab9"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-progress", found)
+        self.assertIn("tab9", out)
+
+    def test_unknown_stage_in_skipped_and_bad_mode_are_errors(self):
+        self.write_progress(mode="review", approved=[], skipped=["thai"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("'review'", out)
+        self.assertIn("'thai'", out)
+
+    def test_approved_must_be_a_list(self):
+        self.write_progress(mode="step", approved="intent")
+        self.assertEqual(self.codes()[0], 1)
+
+    def test_progress_that_is_not_an_object_is_an_error(self):
+        (self.dir / "progress.json").write_text("[]", encoding="utf-8")
+        with self.assertRaisesRegex(sync.DataError, "top level must be a JSON object"):
+            sync.load_project(self.dir)
+        self.assertEqual(self.codes()[0], 2, "DataError exit code")
+
+    def test_empty_object_means_nothing_started(self):
+        self.write_progress()
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(found & {"bad-progress", "progress-out-of-order", "progress-no-data"}, out)
+
+    def test_duplicates_and_overlap_are_errors(self):
+        self.write_progress(mode="step", approved=["intent", "intent", "tab1"], skipped=["tab1"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("listed more than once", out)
+        self.assertIn("both approved and skipped", out)
+
+    def test_approved_stage_after_a_pending_one_warns_out_of_order(self):
+        self.write_progress(mode="step", approved=["tab2"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, "a warning, not an error")
+        self.assertIn("progress-out-of-order", found)
+        self.assertIn("intent, tab1", out)
+
+    def test_skipped_stage_does_not_make_later_approvals_out_of_order(self):
+        self.write_progress(mode="step", approved=["intent", "tab1", "tab3"], skipped=["tab2"])
+        self.assertNotIn("progress-out-of-order", self.codes()[1])
+
+    def test_approved_stage_without_data_warns(self):
+        (self.dir / "decisions.json").unlink()
+        out = self.codes()[2]
+        self.assertRegex(out, r"\[WARNING\] progress-no-data\s+progress.json tab2")
+
+    def test_tab4_counts_as_drafted_only_with_flows_or_steps(self):
+        self.edit("usecases.json", lambda d: [(u.pop("flows", None), u.pop("steps", None)) for u in d["ucs"]])
+        self.assertIn("progress-no-data", self.codes()[1])
+        self.assertIn("tab4", self.codes()[2])
+
+    def test_legacy_tabs_is_info_that_changes_neither_counts_nor_exit_code(self):
+        self.edit("artifacts.json", lambda d: d.update(tabs={"tab1": {"id": "x", "url": "https://claude.ai/a"}}))
+        code, out = run("validate", str(self.dir), "--strict")
+        self.assertEqual(code, 0, out)
+        self.assertIn("[INFO]", out)
+        self.assertNotIn("[WARNING]", out)
+
+    def test_complete_thai_has_no_th_finding_missing_and_stale_each_warn(self):
+        self.assertFalse({c for c in self.codes()[1] if c.startswith("th-")})
+        self.edit("i18n/th.json", lambda d: d.pop("D1"))
+        self.assertIn("th-missing", self.codes()[1])
+        self.edit("decisions.json", lambda d: d["decisions"][0].update(title="Changed title"))
+        self.edit("i18n/th.json", lambda d: d.update(D1={"source_hash": "old", "text": {"title": "x"}}))
+        self.assertIn("th-missing", self.codes()[1], "incomplete text is missing, not stale")
+
+    def test_complete_text_with_an_old_hash_is_stale_not_missing(self):
+        self.edit("i18n/th.json", lambda d: d["D1"].update(source_hash="old"))
+        found = self.codes()[1]
+        self.assertIn("th-stale", found)
+        self.assertNotIn("th-missing", found)
+
+    def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-02"])  # draft
+        self.assertNotIn("steps-missing", self.codes()[1])
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-01"])  # mixed
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, "steps-missing is a warning")
+        self.assertIn("steps-missing", found)
+        self.assertIn("UC-01", out)
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-03"])  # code
+        self.assertEqual(self.codes()[2].count("steps-missing"), 2)
+
+    def test_steps_missing_also_fires_for_an_empty_list(self):
+        self.edit("usecases.json", lambda d: [u.update(steps=[]) for u in d["ucs"] if u["id"] == "UC-03"])
+        self.assertIn("steps-missing", self.codes()[1])
+
+
+class RunModeDocsTests(unittest.TestCase):
+    def setUp(self):
+        self.skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_skill_md_states_the_run_mode_rules(self):
+        for needle in ("step mode", "default", "STOP", "progress.json", '"auto"', '"just do it"', '"translate"', "no review mode"):
+            self.assertIn(needle, self.skill, needle)
+
+    def test_skill_md_states_approval_auto_and_thai_rules(self):
+        for needle in ("`approve tab2`", "alone", '"run all stages"', '"automation"', "`record publish <stage>`", "Thai on every publish",
+                       "i18n-diff", "Haiku", "English, Thai, or both", "step by step", "Never amend or rewrite commits"):
+            self.assertIn(needle, self.skill, needle)
+        self.assertIn("step-by-step by default", self.skill.split("---")[1])
+
+    def test_resume_republishes_a_draft_edited_after_its_last_publish(self):
+        resume = next(line for line in self.skill.splitlines() if line.startswith("**Resume**"))
+        self.assertIn("published page already shows the current rendered version", resume)
+        self.assertNotIn("was not yet published", resume)
+
+    def test_thai_is_in_every_stage_not_a_final_pass(self):
+        for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?i)last non-skipped|thai pass|not part of the per-stage", path.name)
+
+    def test_no_instruction_tells_the_agent_to_amend(self):
+        for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if "amend" in line.lower():
+                    self.assertTrue("never amend" in line.lower() or "not an amend" in line.lower() or "never an amend" in line.lower(), f"{path.name}: {line}")
+
+    def test_skill_md_stays_short(self):
+        self.assertLessEqual(len(self.skill.splitlines()), 90)
+
+    def test_docs_require_steps_for_code_and_mixed_ucs(self):
+        solution = (SKILL / "solution.md").read_text(encoding="utf-8")
+        self.assertIn("steps-missing", solution)
+        self.assertIn("required", solution)
+
 
 class TemplateHygieneTests(unittest.TestCase):
     def test_templates_have_no_hex_colors_or_font_names(self):

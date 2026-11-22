@@ -1,8 +1,10 @@
 <!--part:nav_link-->
-<a class="tab" href="{{href}}"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span></a>
+<a class="tab" href="#{{tab}}" data-tab="{{tab}}"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span></a>
 <!--/part-->
-<!--part:nav_current-->
-<span class="tab current" aria-current="page"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span></span>
+<!--part:tab_section-->
+<section class="tab-section{{active}}" id="view-{{tab}}" data-tab="{{tab}}">
+{{content}}
+</section><!--/tab-section-->
 <!--/part-->
 <!--part:nav_disabled-->
 <span class="tab disabled" aria-disabled="true" tabindex="0" title="{{tooltip}}"><span class="tab-num">{{num}}</span><span class="tab-label">{{label}}</span><svg class="tab-lock" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><rect x="2" y="5" width="8" height="6" rx="1" fill="currentColor"/><path d="M4 5V3.5a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span>

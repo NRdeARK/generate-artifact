@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real-browser checks over the Chrome DevTools Protocol (no npm packages; Node 22+ has a global WebSocket).
-//   node cdp_check.mjs --browser <edge-or-chrome.exe> --pages <dir with intent.html, tab1..tab5.html> --shots <screenshot dir>
+//   node cdp_check.mjs --browser <edge-or-chrome.exe> --pages <dir with index.html> --shots <screenshot dir>
 // Prints one line: RESULT:{"<check>": {"ok": true|false, "detail": "..."}, ..., "_shots": [paths]}
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -99,10 +99,16 @@ async function emulate(kind, size = PHONE) {
   await frames();
 }
 
+// Opens index.html#<page>. Per-tab checks query through act(), the active tab section; the header, footer and
+// viewer dialog live outside the sections and are queried on document.
 async function goto(page, { lang } = {}) {
+  const blank = waitEvent("Page.loadEventFired");  // a fragment-only change would not fire a load event, so go through about:blank
+  await send("Page.navigate", { url: "about:blank" });
+  await blank;
   const loaded = waitEvent("Page.loadEventFired");
-  await send("Page.navigate", { url: pathToFileURL(path.join(pages, `${page}.html`)).href });
+  await send("Page.navigate", { url: pathToFileURL(path.join(pages, "index.html")).href + "#" + page });
   await loaded;
+  await ev(`window.act = () => document.querySelector(".tab-section.active")`);
   if (lang) await ev(`document.documentElement.lang = ${JSON.stringify(lang)}`);
   await ev("document.fonts.ready.then(() => true)");
   await frames();
@@ -113,7 +119,7 @@ async function screenshot(name, selector = null) {
   const file = path.join(shots, `${name}.png`);
   let clip;
   if (selector) {
-    const r = await ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); const b = e.getBoundingClientRect(); return { x: 0, y: b.y + scrollY, w: ${CW}, h: b.height }; })()`);
+    const r = await ev(`(() => { const e = act().querySelector(${JSON.stringify(selector)}); const b = e.getBoundingClientRect(); return { x: 0, y: b.y + scrollY, w: ${CW}, h: b.height }; })()`);
     clip = { x: r.x, y: r.y, width: r.w, height: Math.min(r.h, 6000), scale: 1 };
   } else {
     const metrics = await send("Page.getLayoutMetrics");
@@ -153,7 +159,9 @@ const VIEWER = `(() => {
     layout: v.querySelector(".viewer-panes").dataset.layout };
 })()`;
 
-const rectOf = (selector, scroll = true) => ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); ${scroll ? "e.scrollIntoView({ block: 'center' });" : ""}
+// The viewer dialog and its buttons sit outside the tab sections; everything else is inside the active one.
+const CHROME_SELECTOR = /^(#viewer|\[data-viewer)/;
+const rectOf = (selector, scroll = true) => ev(`(() => { const e = (${CHROME_SELECTOR.test(selector)} ? document : act()).querySelector(${JSON.stringify(selector)}); ${scroll ? "e.scrollIntoView({ block: 'center' });" : ""}
   const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, left: r.x, top: r.y }; })()`);
 
 // ---------------------------------------------------------------- touch helpers (Input.dispatchTouchEvent)
@@ -211,6 +219,32 @@ const scrollPage = async (y) => { await ev(`window.scrollTo(0, ${y})`); await sl
 
 
 async function main() {
+  // ============================================================ (0) one page, hash routing
+  const routeState = () => ev(`(() => ({ hash: location.hash, active: [...document.querySelectorAll(".tab-section.active")].map((s) => s.dataset.tab),
+    current: [...document.querySelectorAll("a.tab[aria-current=page]")].map((a) => a.dataset.tab), sections: document.querySelectorAll(".tab-section").length }))()`);
+  await goto("tab3");
+  let r = await routeState();
+  record("routing.hash_on_load_opens_that_tab", r.sections === 6 && r.active.join() === "tab3" && r.current.join() === "tab3", JSON.stringify(r));
+  await ev(`document.querySelector('a.tab[data-tab="tab2"]').click()`);
+  await sleep(300);
+  r = await routeState();
+  record("routing.click_switches_tab_and_updates_hash", r.hash === "#tab2" && r.active.join() === "tab2" && r.current.join() === "tab2", JSON.stringify(r));
+  await ev("history.back()");
+  await sleep(300);
+  r = await routeState();
+  record("routing.back_returns_to_previous_tab", r.hash === "#tab3" && r.active.join() === "tab3", JSON.stringify(r));
+  await ev("history.forward()");
+  await sleep(300);
+  r = await routeState();
+  record("routing.forward_returns_to_next_tab", r.hash === "#tab2" && r.active.join() === "tab2", JSON.stringify(r));
+  await goto("UC-02");
+  r = await routeState();
+  const inView = await ev(`(() => { const b = document.getElementById("UC-02").getBoundingClientRect(); return b.top < innerHeight && b.bottom > 0; })()`);
+  record("routing.id_hash_opens_the_tab_that_holds_it", r.active.join() === "tab4" && inView, JSON.stringify({ ...r, inView }));
+  await goto("tab4");
+  const ids = await ev(`(() => { const seen = new Map(); document.querySelectorAll("[id]").forEach((e) => seen.set(e.id, (seen.get(e.id) || 0) + 1)); return [...seen].filter(([, n]) => n > 1).map(([id]) => id); })()`);
+  record("routing.no_duplicate_ids_in_document", ids.length === 0, ids.join(", ") || "none");
+
   // ============================================================ (1) phone layout, all six pages
   await emulate("phone");
   for (const page of PAGES) {
@@ -233,17 +267,17 @@ async function main() {
   record("phone.tab_bar_scrolls_sideways", (nav.ox === "auto" || nav.ox === "scroll") && nav.sw > nav.cw, `overflow-x ${nav.ox}, scrollWidth ${nav.sw} > clientWidth ${nav.cw}`);
   for (const page of ["tab3", "tab4"]) {
     await goto(page);
-    const s = await ev(`(() => { const a = document.querySelector(".side").getBoundingClientRect(), m = document.querySelector(".main-col").getBoundingClientRect(); return { aBottom: a.bottom, mTop: m.top, aw: a.width, vw: ${CW} }; })()`);
+    const s = await ev(`(() => { const a = act().querySelector(".side").getBoundingClientRect(), m = act().querySelector(".main-col").getBoundingClientRect(); return { aBottom: a.bottom, mTop: m.top, aw: a.width, vw: ${CW} }; })()`);
     record(`phone.side_index_stacks_on_top.${page}`, s.aBottom <= s.mTop + 1 && s.aw >= s.vw - 40 && s.aw <= s.vw, `side bottom ${s.aBottom.toFixed(1)} <= content top ${s.mTop.toFixed(1)}, side width ${s.aw.toFixed(1)}`);
   }
   for (const page of ["tab1", "tab5"]) {
     await goto(page);
-    const p = await ev(`(() => [...document.querySelectorAll(".ba-cols")].filter((c) => !c.hidden).map((c) => { const [a, b] = [...c.querySelectorAll(":scope > .pair-side")].map((e) => e.getBoundingClientRect()); return { stacked: Math.abs(a.left - b.left) < 2 && b.top >= a.bottom - 1, aw: a.width, vw: ${CW} }; }))()`);
+    const p = await ev(`(() => [...act().querySelectorAll(".ba-cols")].filter((c) => !c.hidden).map((c) => { const [a, b] = [...c.querySelectorAll(":scope > .pair-side")].map((e) => e.getBoundingClientRect()); return { stacked: Math.abs(a.left - b.left) < 2 && b.top >= a.bottom - 1, aw: a.width, vw: ${CW} }; }))()`);
     record(`phone.pairs_stacked.${page}`, p.length > 0 && p.every((x) => x.stacked && x.aw <= x.vw), `${p.length} pair(s): ${JSON.stringify(p)}`);
   }
   for (const page of ["tab1", "tab4", "tab5"]) {
     await goto(page);
-    const t = await ev(`(() => { const tables = [...document.querySelectorAll("table")]; const wraps = [...new Set(tables.map((t) => t.closest(".table-wrap")))].filter(Boolean);
+    const t = await ev(`(() => { const tables = [...act().querySelectorAll("table")]; const wraps = [...new Set(tables.map((t) => t.closest(".table-wrap")))].filter(Boolean);
       return { tables: tables.length, wrapped: tables.every((t) => t.closest(".table-wrap")), auto: wraps.every((w) => getComputedStyle(w).overflowX === "auto"), scrolls: wraps.filter((w) => w.scrollWidth > w.clientWidth).length
     }; })()`);
     // every table lives in a scroll box, and the wide ones (flipped tables, CRUD) really scroll inside it
@@ -251,8 +285,8 @@ async function main() {
   }
 
   // ---- flipped tables: default on phones, swipe one item at a time, toggle to cards and back (remembered)
-  const OPEN_DETAILS = `document.querySelectorAll("details").forEach((d) => { d.open = true; })`;
-  const FLIP_STATE = `(() => { const set = document.querySelector(".tblset"); const vis = (e) => !!e.offsetParent;
+  const OPEN_DETAILS = `act().querySelectorAll("details").forEach((d) => { d.open = true; })`;
+  const FLIP_STATE = `(() => { const set = act().querySelector(".tblset"); const vis = (e) => !!e.offsetParent;
     return { flip: vis(set.querySelector(".tbl-flip")), cards: vis(set.querySelector(".item-cards")), toggle: vis(set.querySelector(".view-toggle")),
       flipPressed: set.querySelector("[data-table-view=flip]").getAttribute("aria-pressed"), cardsPressed: set.querySelector("[data-table-view=cards]").getAttribute("aria-pressed"),
       saved: localStorage.getItem("ga-table-view"), view: document.documentElement.dataset.tableView }; })()`;
@@ -264,28 +298,28 @@ async function main() {
     record(`phone.flipped_is_default.${page}`, f.flip && !f.cards && f.toggle && f.flipPressed === "true" && f.cardsPressed === "false" && f.view === "flip", JSON.stringify(f));
   }
   await goto("tab1");
-  const flipHead = await ev(`[...document.querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=col]")].map((h) => h.innerText.replace(/\\s+/g, " ").trim())`);
-  const flipRows = await ev(`[...document.querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=row]")].map((h) => h.innerText.trim().toLowerCase())`);
+  const flipHead = await ev(`[...act().querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=col]")].map((h) => h.innerText.replace(/\\s+/g, " ").trim())`);
+  const flipRows = await ev(`[...act().querySelector(".tblset").querySelectorAll(".tbl-flip th[scope=row]")].map((h) => h.innerText.trim().toLowerCase())`);
   record("phone.flip_header_is_item_name_and_rows_are_tier_description_traced", flipHead[0] === "UC-01 · View project status" && flipHead[2] === "UC-03 · Weekly report"
     && JSON.stringify(flipRows) === JSON.stringify(["tier", "description", "traced from"]), JSON.stringify({ flipHead, flipRows }));
   await screenshot("flip-phone-tab1");
   const scroller = await rectOf(".flip-scroll");
-  const geometry = await ev(`(() => { const s = document.querySelector(".flip-scroll"); const td = s.querySelector("td"); const th = s.querySelector("th"); return { item: td.getBoundingClientRect().width, left: s.getBoundingClientRect().left, thLeft: th.getBoundingClientRect().left, label: th.getBoundingClientRect().width, view: s.clientWidth, cols: s.querySelectorAll("tr:nth-child(2) td").length, sw: s.scrollWidth, ox: getComputedStyle(s).overflowX, snap: getComputedStyle(s).scrollSnapType, prog: (s.scrollLeft = 150, s.scrollLeft) }; })()`);
-  await ev(`document.querySelector(".flip-scroll").scrollLeft = 0`);
+  const geometry = await ev(`(() => { const s = act().querySelector(".flip-scroll"); const td = s.querySelector("td"); const th = s.querySelector("th"); return { item: td.getBoundingClientRect().width, left: s.getBoundingClientRect().left, thLeft: th.getBoundingClientRect().left, label: th.getBoundingClientRect().width, view: s.clientWidth, cols: s.querySelectorAll("tr:nth-child(2) td").length, sw: s.scrollWidth, ox: getComputedStyle(s).overflowX, snap: getComputedStyle(s).scrollSnapType, prog: (s.scrollLeft = 150, s.scrollLeft) }; })()`);
+  await ev(`act().querySelector(".flip-scroll").scrollLeft = 0`);
   const swipe = async (dx) => { await drag(scroller.x + 60, scroller.y, dx, 0, 12); await sleep(500); };
-  const scrollLeft = () => ev(`document.querySelector(".flip-scroll").scrollLeft`);
+  const scrollLeft = () => ev(`act().querySelector(".flip-scroll").scrollLeft`);
   await swipe(-150);
   const first = await scrollLeft();
   await swipe(-150);
   const second = await scrollLeft();
-  const stuck = await ev(`(() => { const s = document.querySelector(".flip-scroll"); return { th: s.querySelector("th").getBoundingClientRect().left - s.getBoundingClientRect().left, scrolled: s.parentElement.classList.contains("scrolled") }; })()`);
+  const stuck = await ev(`(() => { const s = act().querySelector(".flip-scroll"); return { th: s.querySelector("th").getBoundingClientRect().left - s.getBoundingClientRect().left, scrolled: s.parentElement.classList.contains("scrolled") }; })()`);
   record("phone.flip_swipe_scrolls_one_item_at_a_time", geometry.cols === 3 && near(first, geometry.item, 8) && near(second, geometry.sw - geometry.view, 3) && second > first + 50 && geometry.item < geometry.view + 1,
     `item width ${geometry.item.toFixed(1)}px, scrollLeft after swipe 1 = ${first.toFixed(1)} (one item), after swipe 2 = ${second.toFixed(1)} (end, max ${geometry.sw - geometry.view}), items ${geometry.cols}, visible ${geometry.view}`);
   record("phone.flip_label_column_stays_sticky_and_hint_fades", stuck.th <= 0.5 && stuck.th >= -2.5 && stuck.scrolled && near(geometry.thLeft - geometry.left, 0, 1.5), JSON.stringify({ ...stuck, geometry }));
   await screenshot("flip-phone-tab1-after-swipe", ".tblset");
   // pixel check: nothing may show through left of / under the sticky label column
   async function stripIsClean(selector) {
-    const g = await ev(`(() => { const box = document.querySelector(${JSON.stringify(selector)}); box.scrollIntoView({ block: "center" });
+    const g = await ev(`(() => { const box = act().querySelector(${JSON.stringify(selector)}); box.scrollIntoView({ block: "center" });
       const b = box.getBoundingClientRect(); const th = box.querySelector("th[scope=row]"); const t = th.getBoundingClientRect();
       const rows = [...box.querySelectorAll("th[scope=row]")].map((r) => { const q = r.getBoundingClientRect(); return [q.top - b.top + 6, q.bottom - b.top - 6]; });
       const hits = rows.map(([ra, rb]) => document.elementsFromPoint(b.left + 0.4, b.top + (ra + rb) / 2).slice(0, 3).map((e) => e.tagName + "." + String(e.className).slice(0, 20) + (e.tagName === "TD" || e.tagName === "TH" ? "@" + Math.round(e.getBoundingClientRect().left - b.left) + "-" + Math.round(e.getBoundingClientRect().right - b.left) : "")));
@@ -314,7 +348,7 @@ async function main() {
   await tap(cards.x, cards.y);
   let t = await ev(FLIP_STATE);
   record("phone.flip_toggle_to_cards", !t.flip && t.cards && t.cardsPressed === "true" && t.flipPressed === "false" && t.saved === "cards", JSON.stringify(t));
-  const card = await ev(`(() => { const c = document.querySelector(".tblset .item-cards .item-card"); const head = c.querySelector(".item-head"); const foot = c.querySelector(".item-foot");
+  const card = await ev(`(() => { const c = act().querySelector(".tblset .item-cards .item-card"); const head = c.querySelector(".item-head"); const foot = c.querySelector(".item-foot");
     return { head: head.innerText.replace(/\\s+/g, " ").trim(), labels: [...c.querySelectorAll(".item-label")].length, foot: foot.innerText.replace(/\\s+/g, " ").trim(), cardText: c.innerText.toUpperCase(),
       badgeRight: (() => { const b = c.querySelector(".item-badge").getBoundingClientRect(), h = head.getBoundingClientRect(); return h.right - b.right < 4; })() }; })()`);
   record("phone.item_card_is_compact_name_badge_body_footer", card.head.startsWith("UC-01 · View project status") && card.head.includes("Main") && card.labels === 0 && /(^| )(ID|TIER|DETAILS)( |$)/.test(card.cardText) === false
@@ -365,7 +399,7 @@ async function main() {
   await goto("tab1");
   await ev("localStorage.removeItem('ga-table-view')");
   await goto("tab1");
-  const crud = await ev(`(() => { const set = document.querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent;
+  const crud = await ev(`(() => { const set = act().querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent;
     return { flip: vis(set.querySelector(".tbl-flip")), cards: vis(set.querySelector(".item-cards")), normalHidden: !vis(set.querySelector(".tbl-normal")),
       heads: [...set.querySelectorAll(".tbl-flip th[scope=col]")].map((h) => h.innerText.replace(/\\s+/g, " ").trim()),
       rows: [...set.querySelectorAll(".tbl-flip th[scope=row]")].map((h) => h.innerText.trim().toLowerCase()), toggle: vis(set.querySelector(".view-toggle")) }; })()`);
@@ -374,23 +408,23 @@ async function main() {
   await ev(`document.querySelector(".top").style.visibility = "hidden"`);
   await screenshot("flip-phone-tab1-crud", ".tblset-crud-table");
   await ev(`document.querySelector(".top").style.visibility = ""`);
-  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, document.querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
+  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, act().querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
   await sleep(700);
-  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, document.querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
+  await ev(`document.documentElement.style.scrollBehavior = "auto"; window.scrollTo(0, act().querySelector(".tblset-crud-table").getBoundingClientRect().top + scrollY - 200)`);
   await sleep(700);
   const crudScroller = await rectOf(".tblset-crud-table .flip-scroll", false);
   await drag(crudScroller.x + 60, crudScroller.y, -230, 0, 14);
   await sleep(500);
-  const crudScrolled = await ev(`document.querySelector(".tblset-crud-table .flip-scroll").scrollLeft`);
+  const crudScrolled = await ev(`act().querySelector(".tblset-crud-table .flip-scroll").scrollLeft`);
   await ev(`document.querySelector(".top").style.visibility = "hidden"`);  // the pixel check looks at the table, not at the sticky bar sliding over it
   await sleep(250);
   const crudClean = await stripIsClean(".tblset-crud-table .flip-scroll");
-  record("phone.crud_flip_swipe_moves_and_label_strip_is_pixel_clean", crudScrolled > 100 && crudClean.total > 100 && crudClean.bad === 0 && crudClean.thLeftOffset <= 0.5, JSON.stringify({ crudScrolled, geom: await ev(`(() => { const s = document.querySelector(".tblset-crud-table .flip-scroll"); const td = s.querySelector("td"); return { sw: s.scrollWidth, cw: s.clientWidth, item: td && td.getBoundingClientRect().width }; })()`), ...crudClean }));
+  record("phone.crud_flip_swipe_moves_and_label_strip_is_pixel_clean", crudScrolled > 100 && crudClean.total > 100 && crudClean.bad === 0 && crudClean.thLeftOffset <= 0.5, JSON.stringify({ crudScrolled, geom: await ev(`(() => { const s = act().querySelector(".tblset-crud-table .flip-scroll"); const td = s.querySelector("td"); return { sw: s.scrollWidth, cw: s.clientWidth, item: td && td.getBoundingClientRect().width }; })()`), ...crudClean }));
   await screenshot("flip-phone-tab1-crud-after-swipe", ".tblset-crud-table");
   await ev(`document.querySelector(".top").style.visibility = ""`);
   const crudCardsBtn = await rectOf(".tblset-crud-table button[data-table-view=cards]");
   await tap(crudCardsBtn.x, crudCardsBtn.y);
-  const crudCards = await ev(`(() => { const set = document.querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent; const card = set.querySelector(".item-card");
+  const crudCards = await ev(`(() => { const set = act().querySelector(".tblset-crud-table"); const vis = (e) => !!e.offsetParent; const card = set.querySelector(".item-card");
     return { cards: vis(set.querySelector(".item-cards")), flip: vis(set.querySelector(".tbl-flip")), head: card.querySelector(".item-head").innerText.replace(/\\s+/g, " ").trim(),
       lines: [...card.querySelectorAll(".item-line")].map((l) => l.innerText.replace(/\\s+/g, " ").trim()) }; })()`);
   record("phone.crud_cards_have_name_header_and_four_lines", crudCards.cards && !crudCards.flip && crudCards.head.startsWith("Projects DB") && crudCards.lines.length === 4
@@ -481,7 +515,7 @@ async function main() {
   await goto("tab5");
   await ev("localStorage.removeItem('ga-viewer-layout')");
   await goto("tab5");  // the page reads the saved choice at load
-  await ev(`document.querySelector(".ba-cols:not([hidden]) .expand-both").click()`);
+  await ev(`act().querySelector(".ba-cols:not([hidden]) .expand-both").click()`);
   st = await ev(VIEWER);
   record("desktop.layout_auto_is_side_by_side", st.layout === "side" && st.pane1.x > st.pane0.x + st.pane0.w - 2, `layout=${st.layout}`);
   await screenshot("desktop-compare-side-by-side");
@@ -493,16 +527,16 @@ async function main() {
   await screenshot("desktop-compare-top-bottom");
   await ev(`document.querySelector("[data-viewer=close]").click()`);
   await goto("tab5");
-  await ev(`document.querySelector(".ba-cols:not([hidden]) .expand-both").click()`);
+  await ev(`act().querySelector(".ba-cols:not([hidden]) .expand-both").click()`);
   st = await ev(VIEWER);
   record("desktop.layout_choice_survives_reload", st.layout === "stack", `layout after reload=${st.layout}`);
   await ev(`document.querySelector("[data-viewer=close]").click(); localStorage.removeItem('ga-viewer-layout')`);
 
   await goto("tab1");
-  const wide = await ev(`(() => { const cells = [...document.querySelectorAll(".tbl-normal td")];
-    return { cells: cells.length, tableCell: cells.every((c) => getComputedStyle(c).display === "table-cell"), cardsHidden: getComputedStyle(document.querySelector(".item-cards")).display === "none",
-      columns: [...document.querySelectorAll(".tbl-normal .uc-table th")].map((h) => h.innerText.trim()) }; })()`);
-  const hiddenOnDesktop = await ev(`(() => ({ flip: getComputedStyle(document.querySelector(".tbl-flip")).display, toggle: getComputedStyle(document.querySelector(".view-toggle")).display }))()`);
+  const wide = await ev(`(() => { const cells = [...act().querySelectorAll(".tbl-normal td")];
+    return { cells: cells.length, tableCell: cells.every((c) => getComputedStyle(c).display === "table-cell"), cardsHidden: getComputedStyle(act().querySelector(".item-cards")).display === "none",
+      columns: [...act().querySelectorAll(".tbl-normal .uc-table th")].map((h) => h.innerText.trim()) }; })()`);
+  const hiddenOnDesktop = await ev(`(() => ({ flip: getComputedStyle(act().querySelector(".tbl-flip")).display, toggle: getComputedStyle(act().querySelector(".view-toggle")).display }))()`);
   record("desktop.flip_and_toggle_hidden_on_wide_screens", hiddenOnDesktop.flip === "none" && hiddenOnDesktop.toggle === "none", JSON.stringify(hiddenOnDesktop));
   record("desktop.tables_stay_tables_on_wide_screens", wide.cells > 0 && wide.tableCell && wide.cardsHidden && JSON.stringify(wide.columns) === JSON.stringify(["Use case", "Tier", "Description", "Traced from"]), JSON.stringify(wide));
 
@@ -511,15 +545,15 @@ async function main() {
   await goto("tab4");
   await ev("document.documentElement.style.scrollBehavior = 'auto'");
   const dTop0 = await headerTop();
-  const dShownSide = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  const dShownSide = await ev(`act().querySelector(".side").getBoundingClientRect().top`);
   await scrollPage(900);
   const dHidden = await headerTop();
-  const dSideHidden = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  const dSideHidden = await ev(`act().querySelector(".side").getBoundingClientRect().top`);
   const dVar = await ev("getComputedStyle(document.documentElement).getPropertyValue('--header-h').trim()");
   await scrollPage(780);
   const dShown = await headerTop();
   const dBarHeight = await ev(`document.querySelector(".top").offsetHeight`);
-  const dSideShown = await ev(`document.querySelector(".side").getBoundingClientRect().top`);
+  const dSideShown = await ev(`act().querySelector(".side").getBoundingClientRect().top`);
   record("desktop.header_shown_at_top", near(dTop0, 0, 0.5), `top=${dTop0}`);
   record("desktop.header_hides_on_scroll_down", dHidden < -20 && dVar === "0px", `top after scrolling down=${dHidden}, --header-h=${dVar}`);
   record("desktop.header_shows_on_scroll_up", near(dShown, 0, 0.5), `top after scrolling up=${dShown}`);
@@ -535,7 +569,7 @@ async function main() {
   await scrollPage(30);
   record("desktop.header_shown_near_the_top", near(await headerTop(), 0, 0.5), `top at scrollY 30=${await headerTop()}`);
   await scrollPage(0);
-  await ev(`document.querySelector('.side a[href="#UC-03"]').click()`);
+  await ev(`act().querySelector('.side a[href="#UC-03"]').click()`);
   await sleep(700);
   record("desktop.header_stays_shown_when_the_side_index_is_used", near(await headerTop(), 0, 0.5), `top after jumping via the side index=${await headerTop()} scrollY=${await ev("scrollY")}`);
 
@@ -547,13 +581,13 @@ async function main() {
     && seq.nAdded >= 2 && seq.nChanged >= 2, JSON.stringify(seq));
   record("desktop.seq_markers_not_colour_only_and_legend_above", seq.addedGlyphs && seq.changedGlyphs && /Added in this use case/.test(seq.legendText) && /Changed in this use case/.test(seq.legendText) && /Unchanged/.test(seq.legendText)
     && seq.legendBottom <= seq.svgTop + 1, JSON.stringify({ g: [seq.addedGlyphs, seq.changedGlyphs], legend: seq.legendText, legendBottom: seq.legendBottom, svgTop: seq.svgTop }));
-  await ev(`document.querySelector('#UC-02 .tog[data-fragment="bad-queue"]').click()`);
+  await ev(`act().querySelector('#UC-02 .tog[data-fragment="bad-queue"]').click()`);
   await sleep(300);
-  const frag = await ev(`(() => { const g = document.querySelector('#UC-02 svg[data-reflow] [data-fragment="bad-queue"]'); const marked = [...g.querySelectorAll('g[data-change]')];
+  const frag = await ev(`(() => { const g = act().querySelector('#UC-02 svg[data-reflow] [data-fragment="bad-queue"]'); const marked = [...g.querySelectorAll('g[data-change]')];
     return { shown: g.getAttribute("display") !== "none" && g.getBoundingClientRect().height > 0, marked: marked.length, stroke: marked[0] && getComputedStyle(marked[0].querySelector("line, path")).stroke }; })()`);
   record("desktop.seq_alt_fragment_arrows_are_marked_when_toggled_on", frag.shown && frag.marked >= 2 && frag.stroke === "rgb(31, 111, 168)", JSON.stringify(frag));
   await screenshot("seq-changes-desktop-tab4", "#UC-02 .card");
-  await ev(`document.querySelector("#UC-02 .diagram .expand").click()`);
+  await ev(`act().querySelector("#UC-02 .diagram .expand").click()`);
   await sleep(500);
   const viewerSeq = await ev(`(() => { const v = document.getElementById("viewer"); const legend = document.getElementById("viewer-legend"); const clone = v.querySelector("svg");
     const changed = clone.querySelector('g[data-change="changed"] line, g[data-change="changed"] path');
@@ -576,7 +610,7 @@ async function main() {
   for (const kind of ["desktop", "phone"]) {
     await emulate(kind);
     await goto("tab5", { lang: "th" });
-    await ev(`document.querySelectorAll("details").forEach((d) => { d.open = true; })`);
+    await ev(`act().querySelectorAll("details").forEach((d) => { d.open = true; })`);
     await sleep(200);
     const g = await ev(GLYPHS);
     record(`thai.glyphs_render_${kind}`, g.lang === "th" && g.ink > 50 && g.diff > 200 && Math.abs(g.thaiWidth - g.tofuWidth) > 0.5, `ink=${g.ink} differs-from-tofu=${g.diff} width ${g.thaiWidth.toFixed(1)} vs tofu ${g.tofuWidth.toFixed(1)}; web fonts loaded: ${g.webFonts}`);
@@ -584,7 +618,7 @@ async function main() {
     await screenshot(`thai-${kind}-tab5-files-list`, "#CMP-DB .files");
     for (const page of PAGES) {
       await goto(page, { lang: "th" });
-      await ev(`document.querySelectorAll("details").forEach((d) => { d.open = true; })`);
+      await ev(`act().querySelectorAll("details").forEach((d) => { d.open = true; })`);
       const o = await ev(overflowJs());
       const clipped = await ev(TABS_FIT);
       record(`thai.no_overflow_${kind}.${page}`, (kind === "phone" ? o.sw === o.vw : o.sw <= o.vw) && o.bad.length === 0 && clipped.length === 0, `scrollWidth ${o.sw} vs ${o.vw}; offenders: ${o.bad.join(" | ") || "none"}; clipped tabs: ${clipped.join(",") || "none"}`);

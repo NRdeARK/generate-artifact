@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """artifact_sync: validate, render and export generate-artifact project data.
 
-Stdlib only. Never touches the network or claude.ai: publishing is done by
-Claude with the artifact tools (see SKILL.md), which then updates artifacts.json.
+Stdlib only. Never touches the network: publishing goes through an adapter
+(adapters/README.md), which the agent runs and then records in artifacts.json.
 
     artifact_sync.py validate   <artifact_dir> [--strict]
-    artifact_sync.py render     <artifact_dir> [--tabs intent tab1 ...] [--dry-run]
-    artifact_sync.py export-pdf <artifact_dir> [--lang en|th] [--dry-run]
+    artifact_sync.py render     <artifact_dir> [--theme NAME] [--fonts local|google] [--dry-run]
+    artifact_sync.py open       <artifact_dir> [--no-open]
+    artifact_sync.py export-pdf <artifact_dir> [--lang en|th|both] [--theme NAME] [--fonts local|google] [--dry-run]
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
@@ -18,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import webbrowser
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +36,7 @@ DEFAULT_THEME = "anthropic"
 I18N = SKILL_DIR / "i18n"
 
 TABS = ["intent", "tab1", "tab2", "tab3", "tab4", "tab5"]
+RUN_MODES = ("step", "auto")
 TAB_DATA_FILES = {
     "intent": "intent.md",
     "tab1": "usecases.json",
@@ -57,7 +60,7 @@ TEXT_KEYS = {"title", "summary", "what", "why", "reason", "pros", "cons", "cost"
              "sees", "terms", "label", "choice_reason", "revisit_when", "text", "meaning",
              "plain", "before", "now", "analogy"}
 # data, not prose: never translated even when a key name matches
-NON_TRANSLATABLE = {"infra", "example", "samples", "sample_rows", "data", "files", "default"}
+NON_TRANSLATABLE = {"infra", "example", "samples", "sample_rows", "data", "files", "default", "steps"}
 
 log = logging.getLogger("artifact_sync")
 esc = html.escape
@@ -79,6 +82,7 @@ class Project:
     concepts: dict
     th: dict
     artifacts: dict
+    progress: dict
 
     @property
     def components(self):
@@ -150,14 +154,16 @@ def load_project(root):
         concepts=read_json(root / "concepts.json", ["concepts"]),
         th=read_json(root / "i18n" / "th.json"),
         artifacts=_artifacts(root / "artifacts.json"),
+        progress=read_json(root / "progress.json"),
     )
 
 
 def _artifacts(path):
     data = read_json(path)
-    data["tabs"] = data.get("tabs") or {}
-    if not isinstance(data["tabs"], dict):
-        raise DataError(f"{path}: 'tabs' must be an object keyed by intent, tab1..tab5.")
+    for key in ("tabs", "publish"):
+        data[key] = data.get(key) or {}
+        if not isinstance(data[key], dict):
+            raise DataError(f"{path}: '{key}' must be an object. Fix or remove it.")
     return data
 
 
@@ -205,12 +211,19 @@ def source_hash(text):
     return hashlib.sha1(json.dumps(text, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
 
 
+def th_usable(value):
+    """A Thai value counts only if it is a non-blank string."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 def th_status(project):
-    """[(key, 'missing'|'stale', english_text)] for entries whose Thai is absent or out of date."""
+    """[(key, 'missing'|'stale', english_text)] for entries whose Thai is absent, blank, or out of date.
+    Blank English fields need no Thai."""
     result = []
     for key, text in content_entries(project).items():
         th = project.th.get(key)
-        if th is None or any(path not in th.get("text", {}) for path in text):
+        th_text = th.get("text") if isinstance(th, dict) else None
+        if not isinstance(th_text, dict) or any(en.strip() and not th_usable(th_text.get(path)) for path, en in text.items()):
             result.append((key, "missing", text))
         elif th.get("source_hash") != source_hash(text):
             result.append((key, "stale", text))
@@ -221,7 +234,7 @@ def th_status(project):
 
 @dataclass
 class Finding:
-    severity: str  # error | warning
+    severity: str  # error | warning | info (shown, never counted)
     code: str
     where: str
     message: str
@@ -571,6 +584,124 @@ def check_step_changes(project):
     return out
 
 
+# Big-project rules for sequence diagrams. usecases.json UC field `steps` (optional) lists the arrows:
+# [{"id": "2", "label": "[REST] Fetch latest status", "from": "CMP-WEB", "to": "CMP-API", "call": "web/src/api.ts:12", "flow": "good"}]
+MAX_STEPS, MAX_PARTICIPANTS = 12, 6
+INFRA_KINDS = ("db", "store", "queue", "cache", "external")
+LABEL_TAGS = ("REST", "gRPC", "SQL", "MQ", "CACHE", "WS", "CALL")
+CODE_SOURCES = ("code", "mixed")
+TAG_RE = re.compile(r"^\[(%s)\]\s*\S" % "|".join(re.escape(t) for t in LABEL_TAGS))
+DETAIL_RES = (re.compile(r"\b(GET|POST|PUT|PATCH|DELETE)\b"),
+              re.compile(r"(?<![\w.])/[A-Za-z0-9_-]+(?:/[\w{}:.-]+)*"),
+              re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.*\b(FROM|INTO|SET)\b", re.I))
+CALL_RE = re.compile(r"^(.+):(\d+)$")
+
+
+def uc_steps(uc):
+    """The UC's step objects (dicts only); [] when absent or malformed."""
+    steps = uc.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def check_uc_size(uc):
+    uid, out = uc.get("id", "?"), []
+    by_flow = {}
+    for step in uc_steps(uc):
+        by_flow.setdefault(step.get("flow") or "good", []).append(step)
+    for flow, steps in by_flow.items():
+        if len(steps) > MAX_STEPS:
+            out.append(Finding("warning", "uc-too-large", f"usecases.json {uid} flow {flow}",
+                               f"{len(steps)} steps (max {MAX_STEPS}). Split it into smaller UCs, then redraw each diagram."))
+    parts = uc.get("components") or []
+    if len(parts) > MAX_PARTICIPANTS:
+        out.append(Finding("warning", "uc-too-large", f"usecases.json {uid}",
+                           f"{len(parts)} participants (max {MAX_PARTICIPANTS}). Split it into smaller UCs, then redraw each diagram."))
+    return out
+
+
+def check_steps_required(uc):
+    """A code/mixed UC must list its steps[]: that is where each arrow's call site lives."""
+    if uc.get("source") in CODE_SOURCES and not uc_steps(uc):
+        return [Finding("warning", "steps-missing", f"usecases.json {uc.get('id', '?')}",
+                        f"{uc.get('source')} UC has no steps[]. Add one step per arrow ({{id, label, from, to, call: \"path:line\"}}) from the real code, or mark the UC source 'draft'.")]
+    return []
+
+
+def check_infra_participants(uc, registry, diagram_text=None):
+    """Steps that talk to a db/store/queue/cache/external component must keep it in the UC's participants and diagram."""
+    uid, out, seen = uc.get("id", "?"), [], set()
+    listed = set(uc.get("components") or [])
+    for step in uc_steps(uc):
+        for end in (step.get("from"), step.get("to")):
+            comp = registry.get(end) if isinstance(end, str) else None
+            if not comp or comp.get("kind") not in INFRA_KINDS or end in seen:
+                continue
+            in_diagram = diagram_text is None or str(comp.get("name", "")) in diagram_text
+            if end not in listed or not in_diagram:
+                seen.add(end)
+                out.append(Finding("warning", "infra-participant-missing", f"usecases.json {uid} step {step.get('id', '?')}",
+                                   f"step talks to {end} ({comp.get('kind')}) but it is not a participant in the UC components and diagram. "
+                                   "Add it to components[] and draw it as a lifeline; infra stays in sequence diagrams."))
+    return out
+
+
+def check_step_labels(uc):
+    out = []
+    for step in uc_steps(uc):
+        label, where = step.get("label"), f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}"
+        label = label if isinstance(label, str) else ""
+        if not TAG_RE.match(label):
+            out.append(Finding("warning", "label-format", where,
+                               f"label '{label}' must start with one tag of {', '.join('[%s]' % t for t in LABEL_TAGS)} then a short action, e.g. '[REST] Fetch latest status'."))
+        if any(rx.search(label) for rx in DETAIL_RES):
+            out.append(Finding("warning", "label-too-detailed", where,
+                               f"label '{label}' has an HTTP method, URL path or SQL. Say what the step does ('[REST] Fetch latest status'); put the detail in the UC details diagram."))
+    return out
+
+
+def check_call_sites(uc, repo_root):
+    """Each step of a code/mixed UC needs call 'path:line' pointing at a real source line. Draft UCs are exempt; repo_root None skips existence."""
+    if uc.get("source") not in CODE_SOURCES:
+        return []
+    out = []
+    for step in uc_steps(uc):
+        where, call = f"usecases.json {uc.get('id', '?')} step {step.get('id', '?')}", step.get("call")
+        match = CALL_RE.match(call) if isinstance(call, str) else None
+        if not match:
+            out.append(Finding("warning", "arrow-no-callsite", where,
+                               f"{uc.get('source')} UC needs call: \"path:line\" (the code that makes this arrow). Add it, or mark the UC source 'draft' if the code is not written yet."))
+            continue
+        rel, line = match.group(1), int(match.group(2))
+        if rel.lower().endswith(".md"):
+            out.append(Finding("warning", "callsite-missing", where, f"call {call} points at a doc. Docs are not a valid source; point at code."))
+        elif repo_root is not None:
+            target = (repo_root / rel).resolve()
+            inside = repo_root.resolve() in target.parents
+            if not (inside and target.is_file()):
+                out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} does not exist under {repo_root}. Fix the path."))
+            elif line < 1 or line > len(target.read_text(encoding="utf-8", errors="replace").splitlines()):
+                out.append(Finding("warning", "callsite-missing", where, f"call {call}: {rel} has fewer than {line} lines. Fix the line number."))
+    return out
+
+
+def repo_root_of(artifact_dir):
+    """Parent of docs/artifact, or None when the folder is not laid out that way."""
+    root = Path(artifact_dir).resolve()
+    return root.parent.parent if root.parent.name == "docs" else None
+
+
+def check_big_project(project):
+    registry, repo_root, out = string_ids(project.components), repo_root_of(project.root), []
+    for uc in project.ucs:
+        diagram_text = None
+        if uc.get("diagram"):
+            clean, _ = read_diagram(project.root, uc["diagram"])
+            diagram_text = html.unescape(re.sub(r"<[^>]+>", "\u0000", clean)) if clean else None
+        out += (check_steps_required(uc) + check_uc_size(uc) + check_infra_participants(uc, registry, diagram_text)
+                + check_step_labels(uc) + check_call_sites(uc, repo_root))
+    return out
+
+
 def check_decisions(project):
     known, out = known_ids(project), check_ids("decisions.json", project.decision_list, "decision")
     for dec in project.decision_list:
@@ -617,10 +748,60 @@ def check_concepts(project):
 
 
 def check_artifacts(project):
-    return [Finding("error", "bad-url", f"artifacts.json tabs.{tab}",
-                    f"url {entry.get('url')!r} must be https://{ARTIFACT_AUTHORITY}/... exactly (no credentials, backslashes or ports). It will not be linked.")
-            for tab, entry in project.artifacts["tabs"].items()
-            if isinstance(entry, dict) and entry.get("url") and not safe_url(entry["url"])]
+    """publish.<adapter> = {id, url}. Legacy per-tab entries (tabs.*) are only listed, never judged or rewritten."""
+    found = []
+    for adapter, entry in project.artifacts["publish"].items():
+        where = f"artifacts.json publish.{adapter}"
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or not isinstance(entry.get("url"), str):
+            found.append(Finding("error", "bad-publish", where, "must be an object with string 'id' and 'url'."))
+        elif adapter == "claude-ai" and not safe_url(entry["url"]):
+            found.append(Finding("error", "bad-url", where, f"url {entry['url']!r} must be https://{ARTIFACT_AUTHORITY}/... exactly (no credentials, backslashes or ports). It will not be linked."))
+    if project.artifacts["tabs"]:
+        found.append(Finding("info", "legacy-tabs", "artifacts.json tabs",
+                             f"old per-tab artifacts left as-is ({', '.join(project.artifacts['tabs'])}). Delete them manually if wanted."))
+    return found
+
+
+def stage_drafted(project, stage):
+    """True when the stage's data exists. Tab 4 shares usecases.json with Tab 1, so it needs flows or steps on at least one UC."""
+    if stage == "tab4":
+        return any(uc.get("flows") or uc.get("steps") for uc in project.ucs)
+    return (project.root / TAB_DATA_FILES[stage]).is_file()
+
+
+def check_progress(project):
+    """progress.json = {mode: step|auto, approved: [stage], skipped?: [stage]}; stages are intent, tab1..tab5. Absent or {} = nothing started."""
+    data, found = project.progress, []
+    if not data:
+        return found
+    if data.get("mode") not in RUN_MODES:
+        found.append(Finding("error", "bad-progress", "progress.json mode", f"{data.get('mode')!r} is not one of: {', '.join(RUN_MODES)}."))
+    lists = {}
+    for key in ("approved", "skipped"):
+        stages = data.get(key, [])
+        if not isinstance(stages, list) or not all(isinstance(x, str) for x in stages):
+            found.append(Finding("error", "bad-progress", f"progress.json {key}", "must be a list of stage names."))
+            continue
+        lists[key] = stages
+        for stage in stages:
+            if stage not in TABS:
+                found.append(Finding("error", "bad-progress", f"progress.json {key}", f"unknown stage {stage!r}. Use: {', '.join(TABS)}."))
+        for stage in sorted({x for x in stages if stages.count(x) > 1}):
+            found.append(Finding("error", "bad-progress", f"progress.json {key}", f"stage {stage!r} is listed more than once. Keep one entry."))
+    if len(lists) < 2:
+        return found
+    approved, skipped = lists["approved"], lists["skipped"]
+    for stage in sorted(set(approved) & set(skipped)):
+        found.append(Finding("error", "bad-progress", "progress.json", f"stage {stage!r} is both approved and skipped. Keep it in one list."))
+    for index, stage in enumerate(TABS):
+        if stage not in approved:
+            continue
+        if not stage_drafted(project, stage):
+            found.append(Finding("warning", "progress-no-data", f"progress.json {stage}", f"{stage} is approved but its data ({TAB_DATA_FILES[stage]}{' with flows/steps' if stage == 'tab4' else ''}) is missing. Restore the data or remove the stage from approved."))
+        pending = [t for t in TABS[:index] if t not in approved and t not in skipped]
+        if pending:
+            found.append(Finding("warning", "progress-out-of-order", f"progress.json {stage}", f"{stage} is approved but earlier stage(s) {', '.join(pending)} are neither approved nor skipped. Resume would restart at {pending[0]}."))
+    return found
 
 
 def overview_levels(project):
@@ -722,9 +903,11 @@ VALIDATION_STEPS = [
     ("registry.json", check_registry),
     ("usecases.json", check_usecases),
     ("usecases.json step_changes", check_step_changes),
+    ("usecases.json steps", check_big_project),
     ("decisions.json", check_decisions),
     ("concepts.json", check_concepts),
     ("artifacts.json", check_artifacts),
+    ("progress.json", check_progress),
     ("diagrams/", check_diagrams),
     ("i18n/th.json", check_translations),
 ]
@@ -763,15 +946,53 @@ PART = re.compile(r"<!--part:(\w+)-->(.*?)<!--/part-->", re.DOTALL)
 REF_TAB = [(r"UC-\d+", "tab4"), (r"D\d+", "tab2"), (r"C\d+", "tab3"), (r"CMP-.+", "tab5")]
 
 
-def load_theme(name):
-    """CSS text for a theme: a path to a .css file, or the name of a file in themes/."""
+FONT_MODES = ("local", "google")
+FONT_BLOCK = re.compile(r"/\* fonts:(google|local) \*/.*?/\* /fonts:(?:google|local) \*/", re.DOTALL)
+CSS_REF = re.compile(r"""url\(\s*["']?([^"')\s]+)["']?\s*\)|@import\s+["']([^"']+)["']""")
+REMOTE_FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
+
+
+def theme_font_files(css, theme_dir):
+    """Check every url()/@import in a theme and return the local font files it uses.
+    Allowed: fonts/<file>.woff2 that exists directly inside <theme_dir>/fonts, or an https Google Fonts URL. Anything else is an error."""
+    fonts_dir, files = (theme_dir / "fonts").resolve(), []
+    for match in CSS_REF.finditer(css):
+        ref = match.group(1) or match.group(2)
+        if ref.startswith("https://") and urlparse(ref).hostname in REMOTE_FONT_HOSTS:
+            continue
+        target = (theme_dir / ref).resolve()
+        if not (ref.startswith("fonts/") and ref.endswith(".woff2") and target.parent == fonts_dir):
+            raise DataError(f"theme reference {ref!r} is not allowed. Use fonts/<file>.woff2 inside {fonts_dir}, "
+                            f"or an https URL on {' / '.join(REMOTE_FONT_HOSTS)}.")
+        if not target.is_file():
+            raise DataError(f"theme font {target} not found (referenced as {ref!r}). Add the woff2 file or remove the @font-face.")
+        files.append(target)
+    return files
+
+
+def load_theme(name, fonts="local"):
+    """(css, font_files) for a theme: a path to a .css file, or the name of a file in themes/.
+    The theme keeps one `fonts:google` block (Google Fonts import) and one `fonts:local` block (@font-face on fonts/*.woff2);
+    only the block for `fonts` stays. font_files are the local files the page needs next to it (empty for google)."""
     path = Path(name)
     if not path.is_file():
         path = THEMES / f"{name}.css"
     if not path.is_file():
         available = ", ".join(sorted(p.stem for p in THEMES.glob("*.css")))
         raise DataError(f"theme '{name}' not found. Available: {available}. Or pass the path to a .css file.")
-    return path.read_text(encoding="utf-8")
+    css = path.read_text(encoding="utf-8")
+    theme_font_files(css, path.parent)  # reject bad references whichever mode is used
+    css = FONT_BLOCK.sub(lambda m: m.group(0) if m.group(1) == fonts else "", css)
+    return css, theme_font_files(css, path.parent)
+
+
+def copy_fonts(files, build_dir, dry_run=False):
+    """Put the theme's local font files in build/fonts/ so a relative url(fonts/x.woff2) resolves."""
+    for font in files:
+        log.info("%s %s", "would copy" if dry_run else "copy ", build_dir / "fonts" / font.name)
+        if not dry_run:
+            (build_dir / "fonts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(font, build_dir / "fonts" / font.name)
 
 
 def md_lite(text):
@@ -805,11 +1026,11 @@ def split_bullets(text):
 class Site:
     """Renders one project's pages. All HTML lives in templates/; this class only fills slots."""
 
-    def __init__(self, project, print_mode=False, lang="en", theme=DEFAULT_THEME):
+    def __init__(self, project, print_mode=False, lang="en", theme=DEFAULT_THEME, fonts="local"):
         self.p = project
         self.print_mode = print_mode
         self.lang = lang
-        self.theme_css = load_theme(theme)
+        self.theme_css, self.font_files = load_theme(theme, fonts)
         self.ui_en = read_json(I18N / "en.json")
         self.ui_th = read_json(I18N / "th.json")
         try:
@@ -818,6 +1039,8 @@ class Site:
             raise DataError(f"project data has an unexpected shape ({exc}). Run validate to find the field.") from exc
         self.reg = string_ids(project.components)
         self.ucs = string_ids(project.ucs)
+        self.present = present_tabs(project.root)
+        self.svg_ids = set()
         self.parts = {}
         self._load_parts("_parts.html")
 
@@ -872,32 +1095,22 @@ class Site:
         return self.tx(key, path, block=True, fmt=md_lite)
 
     # --- shared pieces
-    def tab_url(self, tab):
-        entry = self.p.artifacts["tabs"].get(tab)
-        url = entry.get("url") if isinstance(entry, dict) else None
-        return url if safe_url(url) else None
-
-    def tab_title(self, tab):
-        return self.ui_en[f"nav.{tab}"]
-
-    def nav(self, current):
-        """(intent_html, solution_html): numbered tabs, current / linked / disabled, grouped Intent vs Solution."""
+    def nav(self):
+        """(intent_html, solution_html): numbered tab buttons for the in-page router; a tab without data is disabled, never hidden."""
         def item(tab):
             number, label_en = self.ui_en[f"nav.{tab}"].split(" ", 1)
             label_th = self.ui_th.get(f"nav.{tab}", self.ui_en[f"nav.{tab}"]).split(" ", 1)[1]
             slots = dict(num=esc(number), label=self.bi(label_en, label_th))
-            if tab == current:
-                return self.part("nav_current", **slots)
-            if self.tab_url(tab):
-                return self.part("nav_link", href=esc(self.tab_url(tab), quote=True), **slots)
+            if tab in self.present:
+                return self.part("nav_link", tab=tab, **slots)
             return self.part("nav_disabled", tooltip=esc(self.ui_plain("nav.disabled"), quote=True), **slots)
         return item("intent"), "".join(item(tab) for tab in TABS[1:])
 
     def ref(self, ident):
+        """Link to an ID inside this page (the router opens the tab that holds it); plain text when that tab is absent."""
         tab = next((t for pattern, t in REF_TAB if re.fullmatch(pattern, ident)), None)
-        url = self.tab_url(tab) if tab else None
-        if url:
-            return self.part("ref_link", href=esc(f"{url}#{ident}", quote=True), label=esc(ident))
+        if tab in self.present:
+            return self.part("ref_link", href=esc(f"#{ident}", quote=True), label=esc(ident))
         return self.part("ref_plain", label=esc(ident))
 
     def refs(self, idents):
@@ -915,12 +1128,29 @@ class Site:
             return self.part("diagram_missing", file=esc(rel))
         if step_changes:
             clean, _ = mark_step_changes(clean, step_changes)
+        clean = self.unique_ids(clean)
         width = svg_width(clean)
         end = clean.index(">")
         head = re.sub(r'\s(?:width|height)="[^"]*"', "", clean[:end])
         svg = f'{head} style="max-width:{width}px"{clean[end:]}' if width else clean
         expand = "" if self.print_mode else self.part("expand_button", label=esc(self.ui_plain("diagram.expand"), quote=True))
         return self.part("diagram", svg=svg, maxw=width or 1200, expand=expand)
+
+    def unique_ids(self, svg):
+        """All sections share one document, so a diagram used twice (e.g. Tab 1 and Tab 5 overviews) must not repeat ids:
+        markers and aria references would resolve into a hidden copy. Later copies get a numeric suffix, references included."""
+        ids = re.findall(r'\sid="([^"]+)"', svg)
+        repeated = [i for i in ids if i in self.svg_ids]
+        self.svg_ids.update(ids)
+        if not repeated:
+            return svg
+        suffix = f"-{len(self.svg_ids)}"
+        for ident in repeated:
+            svg = re.sub(rf'(\sid="{re.escape(ident)}")', lambda m: m.group(1)[:-1] + suffix + '"', svg)
+            svg = svg.replace(f"url(#{ident})", f"url(#{ident}{suffix})").replace(f'href="#{ident}"', f'href="#{ident}{suffix}"')
+            svg = re.sub(r'(aria-(?:labelledby|describedby)=")([^"]*)"',
+                         lambda m: m.group(1) + " ".join(t + suffix if t == ident else t for t in m.group(2).split()) + '"', svg)
+        return svg
 
     def dictionary(self, cid, change):
         """Data dictionary: one collapsed block per new or changed table (columns, allowed values, samples, example rows)."""
@@ -1055,11 +1285,11 @@ class Site:
     def open_attr(self):
         return "open" if self.print_mode else ""
 
-    # --- pages: each returns (slots, header_extra)
+    # --- tab bodies: each returns the template slots
     def build_intent(self):
         preview = self.diagram(INTENT_DIAGRAM, "intent overview")
         slots = {key: self.tx_block("intent", key) for key in INTENT_SECTIONS}
-        return dict(slots, preview=preview, changelog=self.changelog()), ""
+        return dict(slots, preview=preview, changelog=self.changelog())
 
     def build_tab1(self):
         recap = self.tx("intent", "before", True, lambda s: md_lite(split_bullets(s)[0]))
@@ -1083,7 +1313,7 @@ class Site:
                                     [self.crud_row(r) for r in self.p.usecases["crud"]])
         slots = dict(recap=recap, issues=issues, outcomes=outcomes, tree=self.diagram(uc_tree_path(self.p), "outcome to use cases"),
                      uc_table=uc_table, impact_table=impact_table, crud_table=crud_table, overview=self.before_after("t1.overview"))
-        return slots, ""
+        return slots
 
     def _uc_row(self, uc):
         """One UC row for the table, the flipped table and the item card: the readable name leads."""
@@ -1093,14 +1323,14 @@ class Site:
         else:
             ids = [o.get("id") for o in self.p.usecases["outcomes"] if uid in (o.get("ucs") or []) and isinstance(o.get("id"), str)]
             traced = f'{self.ui("t1.outcome_ref")} {esc(", ".join(ids))}' if ids else "-"
-        url = self.tab_url("tab4")
+        linked = "tab4" in self.present
         name = self.tx(uid, "title")
         valid = isinstance(uid, str)
-        title = (self.part("uc_link", href=esc(f"{url}#{uid}", quote=True), id=esc(uid), name=name) if url and valid
+        title = (self.part("uc_link", href=esc(f"#{uid}", quote=True), id=esc(uid), name=name) if linked and valid
                  else self.part("uc_plain", id=esc(uid if valid else ""), name=name))
         pill = f'<span class="pill {esc(tier.lower())}">{self.ui(f"tier.{tier}")}</span>'
         description = self.tx(uid, "summary")
-        open_link = self.part("ref_link", href=esc(f"{url}#{uid}", quote=True), label=f'{self.ui("t1.open")} &rarr;') if url and valid else ""
+        open_link = self.part("ref_link", href=esc(f"#{uid}", quote=True), label=f'{self.ui("t1.open")} &rarr;') if linked and valid else ""
         footer = f'{self.ui("t1.from")} {traced}' + (f" &middot; {open_link}" if open_link else "")
         return dict(cells=[title, pill, description, traced], title=title, badge=pill, body=[(None, description)], footer=footer,
                     flip=[("col.tier", pill), ("col.description", description), ("col.traced", traced)])
@@ -1118,10 +1348,9 @@ class Site:
     def uc_label(self, uid):
         """'UC-02 · Update a project's status' as a link to Tab 4 (plain text when Tab 4 has no URL or the UC is unknown)."""
         name = self.tx(uid, "title") if uid in self.ucs else ""
-        url = self.tab_url("tab4")
         if not name:
             return self.ref(uid)
-        return (self.part("uc_link", href=esc(f"{url}#{uid}", quote=True), id=esc(uid), name=name) if url
+        return (self.part("uc_link", href=esc(f"#{uid}", quote=True), id=esc(uid), name=name) if "tab4" in self.present
                 else self.part("uc_plain", id=esc(uid), name=name))
 
     def crud_row(self, row):
@@ -1141,7 +1370,7 @@ class Site:
         decided = [d for d in decisions if d.get("status") == "decided"]
         slots = dict(tree=self.diagram(self.p.decisions.get("tree_diagram"), "solution path tree"),
                      open="".join(self._decision(d) for d in is_open), decided="".join(self._decision(d) for d in decided))
-        return slots, ""
+        return slots
 
     def _decision(self, dec):
         did, decided = dec.get("id"), dec.get("status") == "decided"
@@ -1180,7 +1409,7 @@ class Site:
             terms=self.part("terms", text=self.tx(c.get("id"), "terms")) if c.get("terms") else "",
             related=", ".join(filter(None, [self.refs(c.get("decisions")), self.refs(c.get("ucs")), self.refs(c.get("components"))])))
             for c in concepts)
-        return dict(side=side, blocks=blocks), ""
+        return dict(side=side, blocks=blocks)
 
     def _plain_card(self, concept):
         rows = [(key, ui) for key, ui in (("before", "t3.before"), ("now", "t3.now"), ("why", "t3.why_matters")) if concept.get(key)]
@@ -1191,7 +1420,7 @@ class Site:
         side = {tier: "".join(self.part("side_link", id=esc(u.get("id", "")), title=self.tx(u.get("id"), "title"))
                               for u in ucs if u.get("tier") == tier) for tier in TIERS}
         ordered = [u for tier in TIERS for u in ucs if u.get("tier") == tier]
-        return dict(side_main=side["Main"], side_affected=side["Affected"], ucs="".join(self._uc(u) for u in ordered)), ""
+        return dict(side_main=side["Main"], side_affected=side["Affected"], ucs="".join(self._uc(u) for u in ordered))
 
     def _uc(self, uc):
         uid, flows = uc.get("id"), uc.get("flows") or []
@@ -1224,7 +1453,7 @@ class Site:
 
     def build_tab5(self):
         cards = "".join(self._component(c) for c in self.p.components if c.get("status") != "unchanged" or l3_view_paths(self.p, c))
-        return dict(overview=self.before_after("t5.overview"), components=cards, changelog=self.changelog()), ""
+        return dict(overview=self.before_after("t5.overview"), components=cards, changelog=self.changelog())
 
     def _component(self, comp):
         cid, change = comp.get("id"), comp.get("change") or {}
@@ -1254,27 +1483,29 @@ class Site:
             views=views, extra=extra, flowcharts=flowcharts, inside=inside, detail=detail)
 
     def content(self, tab):
-        """(page_title, header_extra, content_html) for one tab."""
+        """(page_title, content_html) for one tab."""
         template = self.template(f"{tab}.html")  # registers the tab's parts before the build_* methods use them
-        slots, header_extra = getattr(self, f"build_{tab}")()
-        content = self.fill(template, **slots)
-        return f"{self.p.name} · {self.tab_title(tab)}", header_extra, content
+        content = self.fill(template, **getattr(self, f"build_{tab}")())
+        return f"{self.p.name} · {self.ui_en[f'nav.{tab}']}", content
 
-    def page(self, tab):
-        title, header_extra, content = self.content(tab)
-        label = self.ui("page.intent" if tab == "intent" else "page.solution")
-        nav_intent, nav_solution = self.nav(tab)
+    def page(self):
+        """The single self-contained page: intent and every present tab as sections, switched by the tab bar."""
+        if not self.present:
+            raise DataError(f"no data files in {self.p.root}. Add intent.md or a tab's data file first (see SKILL.md > Where data lives).")
+        sections = "".join(self.part("tab_section", tab=tab, active=" active" if i == 0 else "", content=self.content(tab)[1])
+                           for i, tab in enumerate(self.present))
+        nav_intent, nav_solution = self.nav()
         labels = {f"label_{key}": esc(self.ui_plain(f"viewer.{key}"), quote=True) for key in ("zoom_in", "zoom_out", "fit", "close", "sync_zoom", "sync_pan", "layout", "layout_side", "layout_stack")}
         return self.fill(
-            self.template("_base.html"), lang=self.lang, title=esc(title), theme_css=self.theme_css,
+            self.template("_base.html"), lang=self.lang, title=esc(self.p.name), theme_css=self.theme_css,
             base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"), base_js=(TEMPLATES / "base.js").read_text(encoding="utf-8"),
-            body_class="", project=esc(self.p.name), page_label=label, header_extra=header_extra, nav_intent=nav_intent, nav_solution=nav_solution,
-            content=content, updated=self.updated(), **labels)
+            project=esc(self.p.name), nav_intent=nav_intent, nav_solution=nav_solution,
+            content=sections, updated=self.updated(), **labels)
 
     def print_document(self, tabs):
         template = self.template("print.html")
         rendered = [self.content(t) for t in tabs]
-        pages = "".join(self.part("print_page", title=esc(title), content=content) for title, _, content in rendered)
+        pages = "".join(self.part("print_page", title=esc(title), content=content) for title, content in rendered)
         toc = "".join(self.part("toc_item", label=self.ui(f"nav.{t}")) for t in tabs)
         return self.fill(template, lang=self.lang, title=esc(f"{self.p.name} · export"), project=esc(self.p.name),
                          theme_css=self.theme_css, base_css=(TEMPLATES / "base.css").read_text(encoding="utf-8"),
@@ -1309,40 +1540,52 @@ def cmd_validate(args):
                              "Lists must be lists and objects must be objects.")]
         findings += found
         errors = sum(1 for f in found if f.severity == "error")
-        log.info("%s %s: %d errors, %d warnings", "FAIL " if errors else "ok   ", label, errors, len(found) - errors)
+        warnings = sum(1 for f in found if f.severity == "warning")
+        log.info("%s %s: %d errors, %d warnings", "FAIL " if errors else "ok   ", label, errors, warnings)
         summary.failed, summary.succeeded = summary.failed + bool(errors), summary.succeeded + (not errors)
     for finding in findings:
         print(finding)
     summary.report("validate")
-    bad = [f for f in findings if f.severity == "error" or args.strict]
+    bad = [f for f in findings if f.severity == "error" or (args.strict and f.severity == "warning")]
     return 1 if bad else 0
 
 
 def cmd_render(args):
     project, summary = load_project(args.artifact_dir), Summary()
-    available = present_tabs(project.root)
-    site, out_dir = Site(project, theme=args.theme), project.root / "build"
-    for tab in args.tabs or TABS:
-        if tab not in available:
-            log.info("skip   %s (needs %s)", tab, TAB_DATA_FILES[tab])
+    site, target = Site(project, theme=args.theme, fonts=args.fonts), project.root / "build" / "index.html"
+    for tab in TABS:
+        if tab not in site.present:
+            log.info("skip   %s (needs %s): shown disabled in the tab bar", tab, TAB_DATA_FILES[tab])
             summary.skipped += 1
-            continue
-        try:
-            page = site.page(tab)
-        except (DataError, KeyError, ValueError, TypeError, AttributeError) as exc:
-            log.error("FAIL   %s: %s", tab, exc)
-            summary.failed += 1
-            continue
-        target = out_dir / f"{tab}.html"
-        if args.dry_run:
-            log.info("would write %s (%d bytes)", target, len(page.encode("utf-8")))
-        else:
-            out_dir.mkdir(exist_ok=True)
-            target.write_text(page, encoding="utf-8")
-            log.info("wrote  %s (%d bytes)", target, len(page.encode("utf-8")))
-        summary.succeeded += 1
+    try:
+        page = site.page()
+    except (DataError, KeyError, ValueError, TypeError, AttributeError) as exc:
+        log.error("FAIL   index.html: %s", exc)
+        summary.failed += 1
+        summary.report("render")
+        return 1
+    size = len(page.encode("utf-8"))
+    if args.dry_run:
+        log.info("would write %s (%d bytes, sections: %s)", target, size, ", ".join(site.present))
+    else:
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(page, encoding="utf-8")
+        copy_fonts(site.font_files, target.parent)
+        log.info("wrote  %s (%d bytes, sections: %s)", target, size, ", ".join(site.present))
+    summary.succeeded += 1
     summary.report("render")
-    return 1 if summary.failed else 0
+    return 0
+
+
+def cmd_open(args):
+    target = (Path(args.artifact_dir) / "build" / "index.html").resolve()
+    if not target.is_file():
+        raise DataError(f"{target} does not exist. Run 'artifact_sync.py render {args.artifact_dir}' first.")
+    uri = target.as_uri()
+    print(uri)
+    if not args.no_open and not webbrowser.open(uri):
+        log.warning("could not start a browser. Open the URI above manually.")
+    return 0
 
 
 def find_browser():
@@ -1352,42 +1595,65 @@ def find_browser():
     return found[0] if found else next((w for w in map(shutil.which, ("msedge", "chrome", "google-chrome", "chromium")) if w), None)
 
 
-def cmd_export_pdf(args):
-    project, summary = load_project(args.artifact_dir), Summary()
+def export_pdf_for(project, args, lang, summary):
+    """Write build/artifact-print-<lang>.html and convert it to build/artifact-<lang>.pdf. Returns False on failure."""
     tabs = present_tabs(project.root)
     out_dir = project.root.resolve() / "build"
-    html_path, pdf_path = out_dir / "artifact-print.html", out_dir / "artifact.pdf"
-    site = Site(project, print_mode=True, lang=args.lang, theme=args.theme)  # bad theme/shape exits via main()
+    html_path, pdf_path = out_dir / f"artifact-print-{lang}.html", out_dir / f"artifact-{lang}.pdf"
+    site = Site(project, print_mode=True, lang=lang, theme=args.theme, fonts=args.fonts)  # bad theme/shape exits via main()
     try:
         document = site.print_document(tabs)
     except (DataError, KeyError, ValueError, TypeError, AttributeError) as exc:
-        log.error("FAIL   print HTML: %s", exc)
+        log.error("FAIL   print HTML (%s): %s", lang, exc)
         summary.failed += 1
-        summary.report("export-pdf")
-        return 1
-    log.info("combined print HTML: cover + %s", ", ".join(tabs))
+        return False
+    log.info("combined print HTML (%s): cover + %s", lang, ", ".join(tabs))
     if args.dry_run:
         log.info("would write %s (%d bytes) and convert to %s", html_path, len(document.encode("utf-8")), pdf_path)
         summary.succeeded += 1
-        summary.report("export-pdf")
-        return 0
+        return True
     out_dir.mkdir(exist_ok=True)
     html_path.write_text(document, encoding="utf-8")
+    copy_fonts(site.font_files, out_dir)
     log.info("wrote  %s", html_path)
     summary.succeeded += 1
     browser = find_browser()
     if not browser:
         log.warning("no Edge/Chrome found. Open %s in a browser and print to PDF (enable background graphics).", html_path)
         summary.skipped += 1
-    else:
-        done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()],
+        return True
+    tmp_pdf = pdf_path.with_name(pdf_path.name + ".tmp")  # convert aside so a failure never leaves or reports an old PDF
+    tmp_pdf.unlink(missing_ok=True)
+    try:
+        done = subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={tmp_pdf}", html_path.resolve().as_uri()],
                               capture_output=True, text=True, timeout=120)
-        if pdf_path.is_file():
-            log.info("wrote  %s", pdf_path)
-            summary.succeeded += 1
-        else:
-            log.error("PDF conversion failed (exit %s): %s. Open %s and print to PDF instead.", done.returncode, done.stderr.strip()[-200:], html_path)
-            summary.failed += 1
+        error = "" if done.returncode == 0 and tmp_pdf.is_file() and tmp_pdf.stat().st_size > 0 else f"exit {done.returncode}: {done.stderr.strip()[-200:]}"
+    except subprocess.TimeoutExpired:
+        error = "timed out after 120 s"
+    if not error:
+        tmp_pdf.replace(pdf_path)
+        log.info("wrote  %s (%d bytes)", pdf_path, pdf_path.stat().st_size)
+        summary.succeeded += 1
+        return True
+    tmp_pdf.unlink(missing_ok=True)
+    log.error("PDF conversion failed (%s), %s kept as before. Open %s and print to PDF instead.", error, pdf_path.name, html_path)
+    summary.failed += 1
+    return False
+
+
+def cmd_export_pdf(args):
+    project, summary = load_project(args.artifact_dir), Summary()
+    langs = ["en", "th"] if args.lang == "both" else [args.lang]
+    missing = th_status(project) if "th" in langs else []
+    if missing:
+        keys = ", ".join(key for key, _, _ in missing)
+        log.error("FAIL   Thai PDF refused: %d entries have no current Thai (%s). Run i18n-diff, translate them into i18n/th.json, then export again "
+                  "(or export English only with --lang en).", len(missing), keys)
+        summary.failed += 1
+        summary.report("export-pdf")
+        return 1
+    for lang in langs:
+        export_pdf_for(project, args, lang, summary)
     summary.report("export-pdf")
     return 1 if summary.failed else 0
 
@@ -1405,20 +1671,21 @@ def cmd_i18n_diff(args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name, handler, helptext in [("validate", cmd_validate, "traceability check"), ("render", cmd_render, "render HTML pages"),
-                                    ("export-pdf", cmd_export_pdf, "combined print HTML and PDF"), ("i18n-diff", cmd_i18n_diff, "list missing or stale Thai")]:
+    for name, handler, helptext in [("validate", cmd_validate, "traceability check"), ("render", cmd_render, "render build/index.html"),
+                                    ("export-pdf", cmd_export_pdf, "combined print HTML and PDF"), ("i18n-diff", cmd_i18n_diff, "list missing or stale Thai"), ("open", cmd_open, "print the file:// URI of build/index.html and open it")]:
         cmd = sub.add_parser(name, help=helptext)
         cmd.add_argument("artifact_dir", help="the project's docs/artifact folder")
         cmd.set_defaults(handler=handler)
         if name == "validate":
             cmd.add_argument("--strict", action="store_true", help="treat warnings as errors")
-        if name == "render":
-            cmd.add_argument("--tabs", nargs="+", choices=TABS, help="pages to render (default: all present)")
+        if name == "open":
+            cmd.add_argument("--no-open", action="store_true", help="only print the URI; do not start a browser")
         if name in ("render", "export-pdf"):
             cmd.add_argument("--theme", default=DEFAULT_THEME, help="theme name in themes/ or path to a .css file (default anthropic)")
+            cmd.add_argument("--fonts", choices=FONT_MODES, default="local", help="local: copy woff2 files to build/fonts/ (default); google: load from Google Fonts (claude-ai adapter)")
             cmd.add_argument("--dry-run", action="store_true", help="log what would be written; write nothing")
         if name == "export-pdf":
-            cmd.add_argument("--lang", choices=("en", "th"), default="en", help="language of the PDF (default en)")
+            cmd.add_argument("--lang", choices=("en", "th", "both"), default="en", help="PDF language: en (default), th, or both (two files, artifact-en.pdf and artifact-th.pdf)")
     return parser
 
 

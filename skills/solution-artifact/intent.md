@@ -21,8 +21,8 @@ Concept from the AI-native SDLC playbook: **intent.md**, a short, version-contro
 No open questions or decisions here. Anything unresolved goes to the solution artifact as **decisions to make**.
 
 ## Review gate
-The user reviews the intent **as the artifact page** and approves it before any solution artifact is drafted.
+The user reviews the intent **as the artifact page** and approves it in chat before any solution artifact is drafted (step mode stops here; see `SKILL.md` section 3). The intent section is published with its Thai text like every other stage.
 
 ## Outputs
-- Self-contained HTML page (`docs/artifact/build/intent.html`), plus optional private `claude.ai` artifact page when running in Claude (publish steps in `SKILL.md`).
+- The `intent` section of the self-contained page `docs/artifact/build/index.html` (tab `#intent`), published through the selected adapter (see `SKILL.md` and `adapters/`).
 - Local `docs/artifact/intent.md` with the same text content, versioned with git (see `solution.md` › Foundations).

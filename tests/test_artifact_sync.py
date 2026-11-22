@@ -358,6 +358,42 @@ class ExportTests(FixtureCase):
         self.assertNotIn('class="lang"', document)
 
 
+class ExportLanguageTests(FixtureCase):
+    def build_dir(self):
+        return self.dir / "build"
+
+    def test_english_is_the_default_and_files_are_suffixed(self):
+        self.assertEqual(run("export-pdf", str(self.dir))[0], 0)
+        self.assertTrue((self.build_dir() / "artifact-print-en.html").is_file())
+        self.assertFalse((self.build_dir() / "artifact-print-th.html").exists())
+
+    def test_th_print_html_is_thai_active_and_loads_local_fonts(self):
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "th", "--fonts", "local")[0], 0)
+        document = (self.build_dir() / "artifact-print-th.html").read_text(encoding="utf-8")
+        self.assertIn('<html lang="th"', document)
+        self.assertRegex(document, "[ก-๛]{3}")
+        self.assertIn('url("fonts/ibm-plex-sans-thai-400.woff2")', document)
+        for font in re.findall(r'url\("(fonts/[^"]+)"\)', document):
+            self.assertTrue((self.build_dir() / font).is_file(), font)
+
+    def test_both_writes_one_print_page_per_language_and_pdfs_when_a_browser_exists(self):
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "both")[0], 0)
+        for lang in ("en", "th"):
+            document = (self.build_dir() / f"artifact-print-{lang}.html").read_text(encoding="utf-8")
+            self.assertIn(f'<html lang="{lang}"', document)
+            if sync.find_browser():
+                self.assertGreater((self.build_dir() / f"artifact-{lang}.pdf").stat().st_size, 10_000)
+
+    def test_missing_thai_blocks_th_and_both_and_names_the_keys(self):
+        self.edit("i18n/th.json", lambda d: d.pop("C1"))
+        for lang in ("th", "both"):
+            with self.subTest(lang=lang), self.assertLogs(sync.log, "ERROR") as logs:
+                self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang)[0], 1)
+            self.assertRegex(logs.output[0], r"Thai PDF refused.*C1.*(i18n-diff|translate)")
+            self.assertFalse(self.build_dir().exists())
+        self.assertEqual(run("export-pdf", str(self.dir), "--lang", "en")[0], 0, "English still exports")
+
+
 class I18nTests(FixtureCase):
     def test_i18n_diff_lists_only_missing_and_stale(self):
         self.edit("usecases.json", lambda d: d["ucs"][0].update(title="Renamed"))
@@ -444,7 +480,7 @@ class ReviewRegressionTests(FixtureCase):
 
     def test_stage_loop_order_is_validate_commit_render_publish(self):
         steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 6. Stage loop")[1].split("## 7.")[0]
-        order = [steps.index(k) for k in ("artifact_sync.py validate", "**Commit**", "artifact_sync.py render", "**Publish**", "`publish.<adapter>")]
+        order = [steps.index(k) for k in ("i18n-diff", "artifact_sync.py validate", "**Commit**", "artifact_sync.py render", "**Publish**", "`publish.<adapter>")]
         self.assertEqual(order, sorted(order))
         self.assertNotIn("republish the others", steps)
 
@@ -2156,6 +2192,14 @@ class ProgressAndStepsTests(FixtureCase):
         self.assertIn("[INFO]", out)
         self.assertNotIn("[WARNING]", out)
 
+    def test_complete_thai_has_no_th_finding_missing_and_stale_each_warn(self):
+        self.assertFalse({c for c in self.codes()[1] if c.startswith("th-")})
+        self.edit("i18n/th.json", lambda d: d.pop("D1"))
+        self.assertIn("th-missing", self.codes()[1])
+        self.edit("decisions.json", lambda d: d["decisions"][0].update(title="Changed title"))
+        self.edit("i18n/th.json", lambda d: d.update(D1={"source_hash": "old", "text": {"title": "x"}}))
+        self.assertTrue({"th-stale", "th-missing"} & self.codes()[1])
+
     def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):
         self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-02"])  # draft
         self.assertNotIn("steps-missing", self.codes()[1])
@@ -2181,10 +2225,15 @@ class RunModeDocsTests(unittest.TestCase):
             self.assertIn(needle, self.skill, needle)
 
     def test_skill_md_states_approval_auto_and_thai_rules(self):
-        for needle in ("`approve tab2`", "alone", '"run all stages"', '"automation"', "`record publish <stage>`", "last non-skipped stage",
-                       "wait for approval", "step by step", "Never amend or rewrite commits"):
+        for needle in ("`approve tab2`", "alone", '"run all stages"', '"automation"', "`record publish <stage>`", "Thai on every publish",
+                       "i18n-diff", "Haiku", "English, Thai, or both", "step by step", "Never amend or rewrite commits"):
             self.assertIn(needle, self.skill, needle)
         self.assertIn("step-by-step by default", self.skill.split("---")[1])
+
+    def test_thai_is_in_every_stage_not_a_final_pass(self):
+        for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?i)last non-skipped|thai pass|not part of the per-stage", path.name)
 
     def test_no_instruction_tells_the_agent_to_amend(self):
         for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:

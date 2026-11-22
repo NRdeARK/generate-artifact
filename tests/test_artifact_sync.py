@@ -1,4 +1,5 @@
 import contextlib
+import html
 import io
 import json
 import os
@@ -379,6 +380,28 @@ class ExportLanguageTests(FixtureCase):
         self.assertIn('url("fonts/ibm-plex-sans-thai-400.woff2")', document)
         for font in re.findall(r'url\("(fonts/[^"]+)"\)', document):
             self.assertTrue((self.build_dir() / font).is_file(), font)
+
+    @unittest.skipUnless(sync.find_browser(), "needs headless Edge/Chrome")
+    def test_th_print_page_shows_thai_and_hides_english_in_a_real_browser(self):
+        """Both languages are embedded, so only computed visibility proves the right one is shown."""
+        th = json.loads((self.dir / "i18n" / "th.json").read_text(encoding="utf-8"))["D1"]["text"]["title"]
+        probe = """<script>addEventListener('load', () => {
+          const pairs = [...document.querySelectorAll('span[data-l=th]')].filter(s => s.textContent.trim() === %s)
+            .map(s => [getComputedStyle(s).display, getComputedStyle(s.previousElementSibling).display]);
+          document.body.setAttribute('data-probe', JSON.stringify(pairs));
+        });</script>""" % json.dumps(th, ensure_ascii=False)
+        for lang, shown, hidden in (("th", "inline", "none"), ("en", "none", "inline")):
+            with self.subTest(lang=lang):
+                self.assertEqual(run("export-pdf", str(self.dir), "--lang", lang)[0], 0)
+                page = self.build_dir() / f"artifact-print-{lang}.html"
+                probed = self.build_dir() / f"probe-{lang}.html"
+                probed.write_text(page.read_text(encoding="utf-8").replace("</body>", probe + "</body>"), encoding="utf-8")
+                dom = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--dump-dom", probed.resolve().as_uri()],
+                                     capture_output=True, text=True, encoding="utf-8", timeout=120).stdout
+                pairs = json.loads(html.unescape(re.search(r'data-probe="([^"]*)"', dom).group(1)))
+                self.assertTrue(pairs, "the Thai title span exists")
+                for thai_display, english_display in pairs:
+                    self.assertEqual((thai_display, english_display), (shown, hidden))
 
     def test_both_writes_one_print_page_per_language_and_pdfs_when_a_browser_exists(self):
         self.assertEqual(run("export-pdf", str(self.dir), "--lang", "both")[0], 0)

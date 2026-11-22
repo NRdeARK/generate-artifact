@@ -2367,6 +2367,11 @@ class RunModeDocsTests(unittest.TestCase):
             self.assertIn(needle, self.skill, needle)
         self.assertIn("step-by-step by default", self.skill.split("---")[1])
 
+    def test_resume_republishes_a_draft_edited_after_its_last_publish(self):
+        resume = next(line for line in self.skill.splitlines() if line.startswith("**Resume**"))
+        self.assertIn("published page already shows the current rendered version", resume)
+        self.assertNotIn("was not yet published", resume)
+
     def test_thai_is_in_every_stage_not_a_final_pass(self):
         for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:
             text = path.read_text(encoding="utf-8")

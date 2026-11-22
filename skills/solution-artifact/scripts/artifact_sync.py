@@ -5,13 +5,12 @@ Stdlib only. Never touches the network: publishing goes through an adapter
 (adapters/README.md), which the agent runs and then records in artifacts.json.
 
     artifact_sync.py validate   <artifact_dir> [--strict]
-    artifact_sync.py render     <artifact_dir> [--theme NAME] [--dry-run]
+    artifact_sync.py render     <artifact_dir> [--theme NAME] [--fonts local|google] [--dry-run]
     artifact_sync.py open       <artifact_dir> [--no-open]
-    artifact_sync.py export-pdf <artifact_dir> [--lang en|th] [--dry-run]
+    artifact_sync.py export-pdf <artifact_dir> [--lang en|th] [--theme NAME] [--fonts local|google] [--dry-run]
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
-import base64
 import hashlib
 import html
 import json
@@ -228,7 +227,7 @@ def th_status(project):
 
 @dataclass
 class Finding:
-    severity: str  # error | warning
+    severity: str  # error | warning | info (shown, never counted)
     code: str
     where: str
     message: str
@@ -751,26 +750,50 @@ def check_artifacts(project):
         elif adapter == "claude-ai" and not safe_url(entry["url"]):
             found.append(Finding("error", "bad-url", where, f"url {entry['url']!r} must be https://{ARTIFACT_AUTHORITY}/... exactly (no credentials, backslashes or ports). It will not be linked."))
     if project.artifacts["tabs"]:
-        found.append(Finding("warning", "legacy-tabs", "artifacts.json tabs",
+        found.append(Finding("info", "legacy-tabs", "artifacts.json tabs",
                              f"old per-tab artifacts left as-is ({', '.join(project.artifacts['tabs'])}). Delete them manually if wanted."))
     return found
 
 
+def stage_drafted(project, stage):
+    """True when the stage's data exists. Tab 4 shares usecases.json with Tab 1, so it needs flows or steps on at least one UC."""
+    if stage == "tab4":
+        return any(uc.get("flows") or uc.get("steps") for uc in project.ucs)
+    return (project.root / TAB_DATA_FILES[stage]).is_file()
+
+
 def check_progress(project):
-    """progress.json = {mode: step|auto, approved: [stage], skipped?: [stage]}; stages are intent, tab1..tab5."""
+    """progress.json = {mode: step|auto, approved: [stage], skipped?: [stage]}; stages are intent, tab1..tab5. Absent or {} = nothing started."""
     data, found = project.progress, []
     if not data:
         return found
     if data.get("mode") not in RUN_MODES:
         found.append(Finding("error", "bad-progress", "progress.json mode", f"{data.get('mode')!r} is not one of: {', '.join(RUN_MODES)}."))
+    lists = {}
     for key in ("approved", "skipped"):
         stages = data.get(key, [])
         if not isinstance(stages, list) or not all(isinstance(x, str) for x in stages):
             found.append(Finding("error", "bad-progress", f"progress.json {key}", "must be a list of stage names."))
             continue
+        lists[key] = stages
         for stage in stages:
             if stage not in TABS:
                 found.append(Finding("error", "bad-progress", f"progress.json {key}", f"unknown stage {stage!r}. Use: {', '.join(TABS)}."))
+        for stage in sorted({x for x in stages if stages.count(x) > 1}):
+            found.append(Finding("error", "bad-progress", f"progress.json {key}", f"stage {stage!r} is listed more than once. Keep one entry."))
+    if len(lists) < 2:
+        return found
+    approved, skipped = lists["approved"], lists["skipped"]
+    for stage in sorted(set(approved) & set(skipped)):
+        found.append(Finding("error", "bad-progress", "progress.json", f"stage {stage!r} is both approved and skipped. Keep it in one list."))
+    for index, stage in enumerate(TABS):
+        if stage not in approved:
+            continue
+        if not stage_drafted(project, stage):
+            found.append(Finding("warning", "progress-no-data", f"progress.json {stage}", f"{stage} is approved but its data ({TAB_DATA_FILES[stage]}{' with flows/steps' if stage == 'tab4' else ''}) is missing. Restore the data or remove the stage from approved."))
+        pending = [t for t in TABS[:index] if t not in approved and t not in skipped]
+        if pending:
+            found.append(Finding("warning", "progress-out-of-order", f"progress.json {stage}", f"{stage} is approved but earlier stage(s) {', '.join(pending)} are neither approved nor skipped. Resume would restart at {pending[0]}."))
     return found
 
 
@@ -916,28 +939,53 @@ PART = re.compile(r"<!--part:(\w+)-->(.*?)<!--/part-->", re.DOTALL)
 REF_TAB = [(r"UC-\d+", "tab4"), (r"D\d+", "tab2"), (r"C\d+", "tab3"), (r"CMP-.+", "tab5")]
 
 
-FONT_URL = re.compile(r"""url\(\s*["']?(fonts/[^"')\s]+\.woff2)["']?\s*\)""")
+FONT_MODES = ("local", "google")
+FONT_BLOCK = re.compile(r"/\* fonts:(google|local) \*/.*?/\* /fonts:(?:google|local) \*/", re.DOTALL)
+CSS_REF = re.compile(r"""url\(\s*["']?([^"')\s]+)["']?\s*\)|@import\s+["']([^"']+)["']""")
+REMOTE_FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 
 
-def inline_fonts(css, base):
-    """Replace url(fonts/x.woff2) in a theme's @font-face rules with base64 data URIs read from `base`, so the page stays offline."""
-    def to_data_uri(match):
-        font = base / match.group(1)
-        if not font.is_file():
-            raise DataError(f"theme font {font} not found (referenced by {match.group(0)}). Put the woff2 file there or remove the @font-face.")
-        return 'url("data:font/woff2;base64,%s")' % base64.b64encode(font.read_bytes()).decode("ascii")
-    return FONT_URL.sub(to_data_uri, css)
+def theme_font_files(css, theme_dir):
+    """Check every url()/@import in a theme and return the local font files it uses.
+    Allowed: fonts/<file>.woff2 that exists directly inside <theme_dir>/fonts, or an https Google Fonts URL. Anything else is an error."""
+    fonts_dir, files = (theme_dir / "fonts").resolve(), []
+    for match in CSS_REF.finditer(css):
+        ref = match.group(1) or match.group(2)
+        if ref.startswith("https://") and urlparse(ref).hostname in REMOTE_FONT_HOSTS:
+            continue
+        target = (theme_dir / ref).resolve()
+        if not (ref.startswith("fonts/") and ref.endswith(".woff2") and target.parent == fonts_dir):
+            raise DataError(f"theme reference {ref!r} is not allowed. Use fonts/<file>.woff2 inside {fonts_dir}, "
+                            f"or an https URL on {' / '.join(REMOTE_FONT_HOSTS)}.")
+        if not target.is_file():
+            raise DataError(f"theme font {target} not found (referenced as {ref!r}). Add the woff2 file or remove the @font-face.")
+        files.append(target)
+    return files
 
 
-def load_theme(name):
-    """CSS text for a theme: a path to a .css file, or the name of a file in themes/. Its font files are inlined."""
+def load_theme(name, fonts="local"):
+    """(css, font_files) for a theme: a path to a .css file, or the name of a file in themes/.
+    The theme keeps one `fonts:google` block (Google Fonts import) and one `fonts:local` block (@font-face on fonts/*.woff2);
+    only the block for `fonts` stays. font_files are the local files the page needs next to it (empty for google)."""
     path = Path(name)
     if not path.is_file():
         path = THEMES / f"{name}.css"
     if not path.is_file():
         available = ", ".join(sorted(p.stem for p in THEMES.glob("*.css")))
         raise DataError(f"theme '{name}' not found. Available: {available}. Or pass the path to a .css file.")
-    return inline_fonts(path.read_text(encoding="utf-8"), path.parent)
+    css = path.read_text(encoding="utf-8")
+    theme_font_files(css, path.parent)  # reject bad references whichever mode is used
+    css = FONT_BLOCK.sub(lambda m: m.group(0) if m.group(1) == fonts else "", css)
+    return css, theme_font_files(css, path.parent)
+
+
+def copy_fonts(files, build_dir, dry_run=False):
+    """Put the theme's local font files in build/fonts/ so a relative url(fonts/x.woff2) resolves."""
+    for font in files:
+        log.info("%s %s", "would copy" if dry_run else "copy ", build_dir / "fonts" / font.name)
+        if not dry_run:
+            (build_dir / "fonts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(font, build_dir / "fonts" / font.name)
 
 
 def md_lite(text):
@@ -971,11 +1019,11 @@ def split_bullets(text):
 class Site:
     """Renders one project's pages. All HTML lives in templates/; this class only fills slots."""
 
-    def __init__(self, project, print_mode=False, lang="en", theme=DEFAULT_THEME):
+    def __init__(self, project, print_mode=False, lang="en", theme=DEFAULT_THEME, fonts="local"):
         self.p = project
         self.print_mode = print_mode
         self.lang = lang
-        self.theme_css = load_theme(theme)
+        self.theme_css, self.font_files = load_theme(theme, fonts)
         self.ui_en = read_json(I18N / "en.json")
         self.ui_th = read_json(I18N / "th.json")
         try:
@@ -1485,18 +1533,19 @@ def cmd_validate(args):
                              "Lists must be lists and objects must be objects.")]
         findings += found
         errors = sum(1 for f in found if f.severity == "error")
-        log.info("%s %s: %d errors, %d warnings", "FAIL " if errors else "ok   ", label, errors, len(found) - errors)
+        warnings = sum(1 for f in found if f.severity == "warning")
+        log.info("%s %s: %d errors, %d warnings", "FAIL " if errors else "ok   ", label, errors, warnings)
         summary.failed, summary.succeeded = summary.failed + bool(errors), summary.succeeded + (not errors)
     for finding in findings:
         print(finding)
     summary.report("validate")
-    bad = [f for f in findings if f.severity == "error" or args.strict]
+    bad = [f for f in findings if f.severity == "error" or (args.strict and f.severity == "warning")]
     return 1 if bad else 0
 
 
 def cmd_render(args):
     project, summary = load_project(args.artifact_dir), Summary()
-    site, target = Site(project, theme=args.theme), project.root / "build" / "index.html"
+    site, target = Site(project, theme=args.theme, fonts=args.fonts), project.root / "build" / "index.html"
     for tab in TABS:
         if tab not in site.present:
             log.info("skip   %s (needs %s): shown disabled in the tab bar", tab, TAB_DATA_FILES[tab])
@@ -1514,6 +1563,7 @@ def cmd_render(args):
     else:
         target.parent.mkdir(exist_ok=True)
         target.write_text(page, encoding="utf-8")
+        copy_fonts(site.font_files, target.parent)
         log.info("wrote  %s (%d bytes, sections: %s)", target, size, ", ".join(site.present))
     summary.succeeded += 1
     summary.report("render")
@@ -1543,7 +1593,7 @@ def cmd_export_pdf(args):
     tabs = present_tabs(project.root)
     out_dir = project.root.resolve() / "build"
     html_path, pdf_path = out_dir / "artifact-print.html", out_dir / "artifact.pdf"
-    site = Site(project, print_mode=True, lang=args.lang, theme=args.theme)  # bad theme/shape exits via main()
+    site = Site(project, print_mode=True, lang=args.lang, theme=args.theme, fonts=args.fonts)  # bad theme/shape exits via main()
     try:
         document = site.print_document(tabs)
     except (DataError, KeyError, ValueError, TypeError, AttributeError) as exc:
@@ -1559,6 +1609,7 @@ def cmd_export_pdf(args):
         return 0
     out_dir.mkdir(exist_ok=True)
     html_path.write_text(document, encoding="utf-8")
+    copy_fonts(site.font_files, out_dir)
     log.info("wrote  %s", html_path)
     summary.succeeded += 1
     browser = find_browser()
@@ -1602,6 +1653,7 @@ def build_parser():
             cmd.add_argument("--no-open", action="store_true", help="only print the URI; do not start a browser")
         if name in ("render", "export-pdf"):
             cmd.add_argument("--theme", default=DEFAULT_THEME, help="theme name in themes/ or path to a .css file (default anthropic)")
+            cmd.add_argument("--fonts", choices=FONT_MODES, default="local", help="local: copy woff2 files to build/fonts/ (default); google: load from Google Fonts (claude-ai adapter)")
             cmd.add_argument("--dry-run", action="store_true", help="log what would be written; write nothing")
         if name == "export-pdf":
             cmd.add_argument("--lang", choices=("en", "th"), default="en", help="language of the PDF (default en)")

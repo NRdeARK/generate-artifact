@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from urllib.parse import urlparse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -88,7 +89,7 @@ class FixtureCase(unittest.TestCase):
 
     def codes(self):
         code, out = run("validate", str(self.dir))
-        return code, set(re.findall(r"\[(?:ERROR|WARNING)\] (\S+)", out)), out
+        return code, set(re.findall(r"\[(?:ERROR|WARNING|INFO)\] (\S+)", out)), out
 
 
 class ValidateTests(FixtureCase):
@@ -153,13 +154,17 @@ class ValidateTests(FixtureCase):
 
 
 class RenderTests(FixtureCase):
-    def build(self):
-        code, _ = run("render", str(self.dir))
+    def build(self, *extra):
+        code, _ = run("render", str(self.dir), *extra)
         self.assertEqual(code, 0)
         return (self.dir / "build" / "index.html").read_text(encoding="utf-8")
 
-    def test_render_writes_only_one_index_html(self):
+    def test_local_render_writes_index_html_and_fonts_dir_only(self):
         self.build()
+        self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["fonts", "index.html"])
+
+    def test_google_render_writes_only_index_html(self):
+        self.build("--fonts", "google")
         self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["index.html"])
 
     def test_page_is_self_contained_and_offline(self):
@@ -169,22 +174,63 @@ class RenderTests(FixtureCase):
         self.assertIn("--accent: #D97757", text)
         self.assertIn('data-set-lang="th"', text)
 
-    def test_theme_fonts_are_embedded_as_base64_with_no_network_font_urls(self):
-        text = self.build()
-        faces = re.findall(r"@font-face\s*\{[^}]*\}", text)
-        self.assertEqual(len(faces), 6)
-        for family in ("Source Serif 4", "Inter", "IBM Plex Sans Thai", "Noto Serif Thai"):
-            self.assertTrue(any(f'font-family: "{family}"' in f for f in faces), family)
-        for face in faces:
-            self.assertRegex(face, r'src:\s*url\("data:font/woff2;base64,[A-Za-z0-9+/=]{1000,}"\)')
-        self.assertNotRegex(text, r"url\(\s*[\"']?(?:https?:|//|fonts/)")
+    def outside_refs(self, text):
+        """Every absolute URL the page loads: link/script/img/iframe src or href, CSS url(), CSS @import."""
+        tags = re.findall(r"""<(?:script|link|img|iframe)[^>]*(?:src|href)=["'](https?://[^"']+)""", text)
+        css = re.findall(r"""url\(\s*["']?(https?://[^"')\s]+)|@import\s+(?:url\()?["']?(https?://[^"')\s]+)""", text)
+        return tags + [a or b for a, b in css]
 
-    def test_missing_font_file_names_the_file(self):
-        css = self.tmp / "t.css"
-        css.write_text('@font-face { font-family: X; src: url("fonts/nope.woff2") format("woff2"); }', encoding="utf-8")
+    def test_claude_ai_render_loads_only_google_fonts_from_outside(self):
+        text = self.build("--fonts", "google")
+        refs = self.outside_refs(text)
+        self.assertTrue(refs)
+        self.assertEqual({urlparse(r).hostname for r in refs}, {"fonts.googleapis.com"})
+        for family in ("Source+Serif+4", "Inter", "IBM+Plex+Sans+Thai", "Noto+Serif+Thai"):
+            self.assertIn(f"family={family}", refs[0])
+        self.assertNotIn("@font-face", text)
+
+    def test_local_render_copies_fonts_matching_the_url_refs(self):
+        text = self.build()
+        refs = re.findall(r'url\("(fonts/[^"]+\.woff2)"\)', text)
+        self.assertEqual(len(refs), 6)
+        for ref in refs:
+            self.assertTrue((self.dir / "build" / ref).is_file(), ref)
+        self.assertEqual(self.outside_refs(text), [])
+        self.assertEqual(sorted(p.name for p in (self.dir / "build" / "fonts").iterdir()), sorted(Path(r).name for r in refs))
+
+    def test_no_render_embeds_font_data_and_both_keep_system_fallbacks(self):
+        for extra in ((), ("--fonts", "google")):
+            text = self.build(*extra)
+            self.assertNotIn("data:font", text)
+            self.assertRegex(text, r'--font-display:[^;]*"Leelawadee UI", Tahoma, Georgia')
+            self.assertRegex(text, r'--font-body:[^;]*Tahoma, system-ui[^;]*"Segoe UI"')
+
+    def theme(self, css):
+        theme = self.tmp / "t" / "theme.css"
+        theme.parent.mkdir()
+        theme.write_text(css, encoding="utf-8")
+        return str(theme)
+
+    def test_theme_with_path_traversal_is_rejected(self):
+        (self.tmp / "t").mkdir()
+        (self.tmp / "t" / "secret.woff2").write_bytes(b"x")
+        (self.tmp / "t" / "fonts").mkdir()
+        (self.tmp / "t" / "theme.css").write_text('@font-face { font-family: X; src: url("fonts/../secret.woff2"); }', encoding="utf-8")
+        with self.assertRaisesRegex(sync.DataError, r"fonts/\.\./secret\.woff2.*not allowed"):
+            sync.load_theme(str(self.tmp / "t" / "theme.css"))
+
+    def test_theme_with_remote_non_google_url_or_data_uri_is_rejected(self):
+        for ref in ("https://evil.example/f.woff2", "http://fonts.googleapis.com/css", "data:font/woff2;base64,AAAA"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(sync.DataError, "not allowed"):
+                sync.load_theme(self.theme(f'@font-face {{ src: url("{ref}"); }}'))
+            shutil.rmtree(self.tmp / "t")
+        with self.assertRaisesRegex(sync.DataError, "not allowed"):
+            sync.load_theme(self.theme('@import "https://evil.example/x.css";'))
+
+    def test_theme_font_that_does_not_exist_names_the_file(self):
         with self.assertRaisesRegex(sync.DataError, "nope.woff2"):
-            sync.load_theme(str(css))
-        self.assertNotEqual(run("render", str(self.dir), "--theme", str(css))[0], 0)
+            sync.load_theme(self.theme('@font-face { src: url("fonts/nope.woff2"); }'))
+        self.assertNotEqual(run("render", str(self.dir), "--theme", str(self.tmp / "t" / "theme.css"))[0], 0)
 
     def test_page_renders_with_toggle_when_thai_is_missing(self):
         (self.dir / "i18n" / "th.json").unlink()
@@ -1881,7 +1927,7 @@ class LegacyArtifactsTests(FixtureCase):
         self.path = self.dir / "artifacts.json"
         self.path.write_bytes(self.LEGACY.encode("utf-8"))
 
-    def test_legacy_tabs_are_a_warning_not_an_error(self):
+    def test_legacy_tabs_are_info_not_an_error(self):
         code, codes, out = self.codes()
         self.assertEqual(code, 0)
         self.assertIn("legacy-tabs", codes)
@@ -2063,6 +2109,53 @@ class ProgressAndStepsTests(FixtureCase):
         self.write_progress(mode="step", approved="intent")
         self.assertEqual(self.codes()[0], 1)
 
+    def test_progress_that_is_not_an_object_is_an_error(self):
+        (self.dir / "progress.json").write_text("[]", encoding="utf-8")
+        with self.assertRaisesRegex(sync.DataError, "top level must be a JSON object"):
+            sync.load_project(self.dir)
+        self.assertEqual(self.codes()[0], 2, "DataError exit code")
+
+    def test_empty_object_means_nothing_started(self):
+        self.write_progress()
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(found & {"bad-progress", "progress-out-of-order", "progress-no-data"}, out)
+
+    def test_duplicates_and_overlap_are_errors(self):
+        self.write_progress(mode="step", approved=["intent", "intent", "tab1"], skipped=["tab1"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("listed more than once", out)
+        self.assertIn("both approved and skipped", out)
+
+    def test_approved_stage_after_a_pending_one_warns_out_of_order(self):
+        self.write_progress(mode="step", approved=["tab2"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, "a warning, not an error")
+        self.assertIn("progress-out-of-order", found)
+        self.assertIn("intent, tab1", out)
+
+    def test_skipped_stage_does_not_make_later_approvals_out_of_order(self):
+        self.write_progress(mode="step", approved=["intent", "tab1", "tab3"], skipped=["tab2"])
+        self.assertNotIn("progress-out-of-order", self.codes()[1])
+
+    def test_approved_stage_without_data_warns(self):
+        (self.dir / "decisions.json").unlink()
+        out = self.codes()[2]
+        self.assertRegex(out, r"\[WARNING\] progress-no-data\s+progress.json tab2")
+
+    def test_tab4_counts_as_drafted_only_with_flows_or_steps(self):
+        self.edit("usecases.json", lambda d: [(u.pop("flows", None), u.pop("steps", None)) for u in d["ucs"]])
+        self.assertIn("progress-no-data", self.codes()[1])
+        self.assertIn("tab4", self.codes()[2])
+
+    def test_legacy_tabs_is_info_that_changes_neither_counts_nor_exit_code(self):
+        self.edit("artifacts.json", lambda d: d.update(tabs={"tab1": {"id": "x", "url": "https://claude.ai/a"}}))
+        code, out = run("validate", str(self.dir), "--strict")
+        self.assertEqual(code, 0, out)
+        self.assertIn("[INFO]", out)
+        self.assertNotIn("[WARNING]", out)
+
     def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):
         self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-02"])  # draft
         self.assertNotIn("steps-missing", self.codes()[1])
@@ -2086,6 +2179,18 @@ class RunModeDocsTests(unittest.TestCase):
     def test_skill_md_states_the_run_mode_rules(self):
         for needle in ("step mode", "default", "STOP", "progress.json", '"auto"', '"just do it"', '"translate"', "no review mode"):
             self.assertIn(needle, self.skill, needle)
+
+    def test_skill_md_states_approval_auto_and_thai_rules(self):
+        for needle in ("`approve tab2`", "alone", '"run all stages"', '"automation"', "`record publish <stage>`", "last non-skipped stage",
+                       "wait for approval", "step by step", "Never amend or rewrite commits"):
+            self.assertIn(needle, self.skill, needle)
+        self.assertIn("step-by-step by default", self.skill.split("---")[1])
+
+    def test_no_instruction_tells_the_agent_to_amend(self):
+        for path in list(SKILL.rglob("*.md")) + [SKILL.parent.parent / "README.md"]:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if "amend" in line.lower():
+                    self.assertTrue("never amend" in line.lower() or "not an amend" in line.lower() or "never an amend" in line.lower(), f"{path.name}: {line}")
 
     def test_skill_md_stays_short(self):
         self.assertLessEqual(len(self.skill.splitlines()), 90)

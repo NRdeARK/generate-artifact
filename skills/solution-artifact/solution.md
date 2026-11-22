@@ -93,7 +93,7 @@ Per UC (Main first, then Affected):
 - Two layers of text:
   1. **UI strings** (tab names, labels, legends, "chosen/deferred"): one catalog per language (`i18n/en.json`, `i18n/th.json`). Translated once and reused by every project.
   2. **Project content** (UCs, decisions, concepts, touchpoints): English is the source of truth in the data files. The Thai version sits alongside it, keyed by the same IDs.
-- **Flow**: write and approve English through Tab 5 → then, once, spawn a **fast, cheap translator sub-agent** to translate into Thai → validate/commit/render/publish. Thai runs after Tab 5 is approved (step mode), when the user says "translate", or once at the end of auto mode; never per stage (see `SKILL.md` section 7). On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
+- **Flow**: write and approve English through the last non-skipped stage → then, once, spawn a **fast, cheap translator sub-agent** to translate into Thai → validate/commit/render/publish. Thai runs after the last non-skipped stage is approved (step mode, announced and approved before the extra publish), when the user says "translate", or as the last step of auto mode; never per stage (see `SKILL.md` section 7). On each new version only **changed or new entries** get re-translated (diff by ID + content hash), which keeps cost down.
 - **Kept untranslated**: IDs (UC-01, D2), component names from the registry, code, API paths, file names.
 - **Diagrams stay English-only** (decided 2026-11-15): diagram labels are never translated and each diagram is drawn once. Only the text around diagrams toggles EN/TH.
 - **Switching**: an EN | TH toggle in the header. Language is a view preference, not a decision, so in-page state is fine here. It's remembered per browser.
@@ -101,7 +101,7 @@ Per UC (Main first, then Affected):
 
 ## Versioning = git (decided 2026-11-15)
 - These are personal work docs, so **git is the history**. There's no hand-maintained changelog and no per-item "changed in vX" markers.
-- Each publish follows a commit (commit, then render, then publish). The page footer shows `updated <date> · <short commit>`.
+- Each publish follows the stage commit (commit, then render, then publish; the publish record is its own later commit, never an amend). The page footer shows `updated <date> · <short commit>`.
 - The collapsed "Changelog" and "Change track" sections are **generated from `git log`** (for the whole doc, or filtered to an entry's ID). Nothing is written by hand.
 - No document status badges (draft/approved…). The work is agile; the user says "go" in chat when ready.
 

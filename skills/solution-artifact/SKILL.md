@@ -1,11 +1,11 @@
 ---
 name: solution-artifact
-description: Turn project work into ONE living, self-contained HTML page (also exportable to PDF) with an in-page tab bar, publishable through a pluggable adapter. Two kinds. (1) INTENT artifact - what / why / before state / constraints / outcome success. (2) SOLUTION artifact - 5 tabs (use cases & coverage, decisions, concepts, UC details, components) with C4 component registry, traceability check and EN/TH toggle. Use only when the user asks for an intent artifact or a solution artifact by name (e.g. "intent artifact", "make the intent page", "solution artifact", "solution design artifact", "use cases / decisions / components tabs"), or invokes /solution-artifact. Do not use for generic "make an artifact / page / publish this / share link" requests.
+description: Turn project work into ONE living HTML page, built step-by-step by default, (also exportable to PDF) with an in-page tab bar, publishable through a pluggable adapter. Two kinds. (1) INTENT artifact - what / why / before state / constraints / outcome success. (2) SOLUTION artifact - 5 tabs (use cases & coverage, decisions, concepts, UC details, components) with C4 component registry, traceability check and EN/TH toggle. Use only when the user asks for an intent artifact or a solution artifact by name (e.g. "intent artifact", "make the intent page", "solution artifact", "solution design artifact", "use cases / decisions / components tabs"), or invokes /solution-artifact. Do not use for generic "make an artifact / page / publish this / share link" requests.
 ---
 
 # solution-artifact (router)
 
-Works in any agent runtime. It drafts and validates data, renders **one** self-contained page `<dir>/build/index.html` (inline CSS/JS/SVG, offline; tabs switch in-page via `#intent`, `#tab1`..`#tab5`), and publishes it through an **adapter** (`adapters/README.md`). Pages start private to the user.
+Works in any agent runtime. It drafts and validates data, renders **one** self-contained page `<dir>/build/index.html` (inline CSS/JS/SVG; fonts via the adapter; tabs switch in-page via `#intent`, `#tab1`..`#tab5`), and publishes it through an **adapter** (`adapters/README.md`). Pages start private to the user.
 Spec files next to this one: `intent.md` (intent section), `solution.md` (all 5 tabs and cross-cutting rules). Read the one you route to before drafting.
 Script: `scripts/artifact_sync.py` (path relative to this file; `validate`, `render`, `open`, `export-pdf`, `i18n-diff`). Python 3.9+, stdlib only, never calls the network.
 
@@ -23,10 +23,12 @@ If unclear, ask which one. Never draft a solution before the intent is approved.
 Field shapes: copy `examples/sample-project/docs/artifact/`. English is the source; Thai is keyed by ID with a source hash.
 
 ## 3. Run modes
-**Step mode is the default.** Stages, in order: Intent, Tab 1 use cases, Tab 2 decisions, Tab 3 concepts, Tab 4 UC details, Tab 5 components. Per stage run the stage loop (section 6), reply with the URL and a short summary, then **STOP and wait for the user's approval in chat**. Never start the next stage without it. On approval add the stage to `progress.json` `approved`. Skip a stage only when the user says so; record it in `skipped`.
-**Auto mode** only when the user says "auto" or "just do it": run every stage without pausing, one stage loop at the end (one validate, commit, render, publish), Thai once after it. Set `"mode": "auto"`.
-There is no other mode (no review mode).
-**Resume** in a new session: read `docs/artifact/progress.json` (`{"mode": "step|auto", "approved": ["intent", "tab1"], "skipped": []}`, committed with the data) and the data files. The next stage is the first of `intent, tab1..tab5` not in `approved` or `skipped`. If its data file already exists it was drafted but not approved: show its page and ask, do not redraft. Unknown stage names fail `validate`.
+**Step mode is the default (step-by-step).** Stages, in order: Intent, Tab 1 use cases, Tab 2 decisions, Tab 3 concepts, Tab 4 UC details, Tab 5 components. Per stage run the stage loop (section 6), reply with the URL and a short summary, then **STOP and wait for the user's approval in chat**. Never start the next stage without it.
+**On approval:** add the stage to `progress.json` `approved`, commit that file alone (`approve tab2`). No render, no publish. Skip a stage only when the user says so; record it in `skipped`.
+**Auto mode** only when the user explicitly asks to run without pausing ("auto mode", "just do it", "run all stages"); a bare "automation" or "auto-scaling" in a brief does not count. It runs the same stage loop for every stage (each is a checkpoint: validate, commit, render, publish), records each stage in `approved` and sets `"mode": "auto"`, then the Thai pass last.
+**Switching:** "stop" or "step by step" during auto: finish the current stage, set `"mode": "step"`, wait. "auto" during step: set `"mode": "auto"`, continue from the next stage.
+There is no other mode (no review mode). **Never amend or rewrite commits.**
+**Resume** in a new session: read `docs/artifact/progress.json` (`{"mode": "step|auto", "approved": ["intent", "tab1"], "skipped": []}`) and the data files. The next stage is the first of `intent, tab1..tab5` not in `approved` or `skipped`. If its data already exists it was drafted but not approved: show its page and ask, do not redraft. Data exists = the stage's file is present; for Tab 4, `usecases.json` has `flows` or `steps` on at least one UC. `validate` checks the file (unknown stage, duplicates, out-of-order or data-less approvals).
 
 ## 4. Intent flow
 1. Write `intent.md` (What, Why, Before state, Constraints, Outcome success). Short. No open questions.
@@ -43,18 +45,19 @@ Build only the tabs the work needs (one stage each, in the order above). A tab w
 - Tab 2 is **read-only** (no choose buttons): decisions happen in chat or comments; update `decisions.json` (chosen/deferred/rejected + reason, deferred needs `revisit_when`) and republish.
 - Layout facts the renderer already handles (do not re-implement): sticky auto-hiding top bar, phone-first flipped tables with a Flip/Cards toggle, `.table-wrap` scroll boxes, EN/TH toggle. `tests/browser/cdp_check.mjs` checks 390px and 360px.
 
-## 6. Stage loop (one stage, one publish, one commit)
-1. Edit the stage's data file (plus `progress.json`).
-2. `python scripts/artifact_sync.py validate <dir>`: fix every ERROR (exit 1); show or fix warnings.
-3. **Commit** data + `progress.json`; mention IDs like `UC-02` in the message so change tracks fill in.
-4. `python scripts/artifact_sync.py render <dir> [--theme anthropic]` writes `<dir>/build/index.html` (`--theme` takes a name in `themes/` or a path to a .css file; its fonts are inlined). It runs after the commit, so the footer shows this commit.
-5. **Publish** with the selected adapter (selection order in `adapters/README.md`: `artifacts.json` `"adapter"`, then a detected hosting adapter, then `local`). Title is the project name.
-6. First publish only: write `adapter` and `publish.<adapter> = {id, url}` into `artifacts.json` and `git commit --amend --no-edit` (local, unpushed commit) so the stage stays one commit.
-7. Reply with the URL (or `local` path and `artifact_sync.py open`) in one line plus a short summary, then follow the run mode (stop in step mode). Do not paste page content.
-Legacy `artifacts.json` `tabs.*` entries (old per-tab artifacts) are never edited or deleted: list them once as "old per-tab artifacts, left as-is; delete manually if wanted". `validate` reports them as warning `legacy-tabs`.
+## 6. Stage loop (one stage, one publish)
+1. Pick the adapter (selection order in `adapters/README.md`: `artifacts.json` `"adapter"`, then a detected hosting adapter, then `local`); it decides the font mode.
+2. Edit the stage's data file.
+3. `python scripts/artifact_sync.py validate <dir>`: fix every ERROR (exit 1); show or fix warnings.
+4. **Commit** the stage data; mention IDs like `UC-02` in the message so change tracks fill in. This commit is what the page footer shows.
+5. `python scripts/artifact_sync.py render <dir> [--theme anthropic] [--fonts local|google]` writes `<dir>/build/index.html` (`--fonts` is stated by the adapter file: `google` loads Google Fonts, `local` copies woff2 files to `build/fonts/`; `--theme` takes a name in `themes/` or a .css path).
+6. **Publish** with the adapter. Title is the project name.
+7. When `artifacts.json` changed (first publish: `adapter`, `publish.<adapter> = {id, url}`), commit it alone as `record publish <stage>`.
+8. Reply with the URL (or `local` path and `artifact_sync.py open`) in one line plus a short summary, then follow the run mode (stop in step mode). Do not paste page content.
+Legacy `artifacts.json` `tabs.*` entries (old per-tab artifacts) are never edited or deleted: list them once as "old per-tab artifacts, left as-is; delete manually if wanted". `validate` shows them as info `legacy-tabs`.
 
 ## 7. Thai (not part of the per-stage loop)
-Run **only** (a) after Tab 5 is approved in step mode, (b) when the user says "translate", or (c) once at the end of auto mode. Order: `python scripts/artifact_sync.py i18n-diff <dir>` lists missing/stale entries as JSON; hand only those to a fast, cheap translator sub-agent that writes `i18n/th.json` as `{key: {"source_hash": <from diff>, "text": {path: thai}}}` (IDs, component names, code, paths stay English); then validate, commit, render, publish as in section 6. The page's EN/TH toggle works while Thai is missing or partial.
+Run **only** (a) after the **last non-skipped stage** is approved in step mode, (b) when the user says "translate", or (c) as the last step of auto mode. In step mode announce it and wait for approval before the extra publish. Order: `python scripts/artifact_sync.py i18n-diff <dir>` lists missing/stale entries as JSON; hand only those to a fast, cheap translator sub-agent that writes `i18n/th.json` as `{key: {"source_hash": <from diff>, "text": {path: thai}}}` (IDs, component names, code, paths stay English); then validate, commit, render, publish, record publish as in section 6. The page's EN/TH toggle works while Thai is missing or partial.
 
 ## 8. Sharing warning (every time)
 The one page contains Tab 4 and Tab 5 code details (flows, schemas, file paths). Before the user shares it, remind them to check for secrets and internal hostnames. The agent never changes sharing settings.

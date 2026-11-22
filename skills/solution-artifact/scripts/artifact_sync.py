@@ -11,6 +11,7 @@ Stdlib only. Never touches the network: publishing goes through an adapter
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
+import base64
 import hashlib
 import html
 import json
@@ -36,6 +37,7 @@ DEFAULT_THEME = "anthropic"
 I18N = SKILL_DIR / "i18n"
 
 TABS = ["intent", "tab1", "tab2", "tab3", "tab4", "tab5"]
+RUN_MODES = ("step", "auto")
 TAB_DATA_FILES = {
     "intent": "intent.md",
     "tab1": "usecases.json",
@@ -81,6 +83,7 @@ class Project:
     concepts: dict
     th: dict
     artifacts: dict
+    progress: dict
 
     @property
     def components(self):
@@ -152,6 +155,7 @@ def load_project(root):
         concepts=read_json(root / "concepts.json", ["concepts"]),
         th=read_json(root / "i18n" / "th.json"),
         artifacts=_artifacts(root / "artifacts.json"),
+        progress=read_json(root / "progress.json"),
     )
 
 
@@ -609,6 +613,14 @@ def check_uc_size(uc):
     return out
 
 
+def check_steps_required(uc):
+    """A code/mixed UC must list its steps[]: that is where each arrow's call site lives."""
+    if uc.get("source") in CODE_SOURCES and not uc_steps(uc):
+        return [Finding("warning", "steps-missing", f"usecases.json {uc.get('id', '?')}",
+                        f"{uc.get('source')} UC has no steps[]. Add one step per arrow ({{id, label, from, to, call: \"path:line\"}}) from the real code, or mark the UC source 'draft'.")]
+    return []
+
+
 def check_infra_participants(uc, registry, diagram_text=None):
     """Steps that talk to a db/store/queue/cache/external component must keep it in the UC's participants and diagram."""
     uid, out, seen = uc.get("id", "?"), [], set()
@@ -679,7 +691,7 @@ def check_big_project(project):
         if uc.get("diagram"):
             clean, _ = read_diagram(project.root, uc["diagram"])
             diagram_text = html.unescape(re.sub(r"<[^>]+>", "\u0000", clean)) if clean else None
-        out += (check_uc_size(uc) + check_infra_participants(uc, registry, diagram_text)
+        out += (check_steps_required(uc) + check_uc_size(uc) + check_infra_participants(uc, registry, diagram_text)
                 + check_step_labels(uc) + check_call_sites(uc, repo_root))
     return out
 
@@ -741,6 +753,24 @@ def check_artifacts(project):
     if project.artifacts["tabs"]:
         found.append(Finding("warning", "legacy-tabs", "artifacts.json tabs",
                              f"old per-tab artifacts left as-is ({', '.join(project.artifacts['tabs'])}). Delete them manually if wanted."))
+    return found
+
+
+def check_progress(project):
+    """progress.json = {mode: step|auto, approved: [stage], skipped?: [stage]}; stages are intent, tab1..tab5."""
+    data, found = project.progress, []
+    if not data:
+        return found
+    if data.get("mode") not in RUN_MODES:
+        found.append(Finding("error", "bad-progress", "progress.json mode", f"{data.get('mode')!r} is not one of: {', '.join(RUN_MODES)}."))
+    for key in ("approved", "skipped"):
+        stages = data.get(key, [])
+        if not isinstance(stages, list) or not all(isinstance(x, str) for x in stages):
+            found.append(Finding("error", "bad-progress", f"progress.json {key}", "must be a list of stage names."))
+            continue
+        for stage in stages:
+            if stage not in TABS:
+                found.append(Finding("error", "bad-progress", f"progress.json {key}", f"unknown stage {stage!r}. Use: {', '.join(TABS)}."))
     return found
 
 
@@ -847,6 +877,7 @@ VALIDATION_STEPS = [
     ("decisions.json", check_decisions),
     ("concepts.json", check_concepts),
     ("artifacts.json", check_artifacts),
+    ("progress.json", check_progress),
     ("diagrams/", check_diagrams),
     ("i18n/th.json", check_translations),
 ]
@@ -885,15 +916,28 @@ PART = re.compile(r"<!--part:(\w+)-->(.*?)<!--/part-->", re.DOTALL)
 REF_TAB = [(r"UC-\d+", "tab4"), (r"D\d+", "tab2"), (r"C\d+", "tab3"), (r"CMP-.+", "tab5")]
 
 
+FONT_URL = re.compile(r"""url\(\s*["']?(fonts/[^"')\s]+\.woff2)["']?\s*\)""")
+
+
+def inline_fonts(css, base):
+    """Replace url(fonts/x.woff2) in a theme's @font-face rules with base64 data URIs read from `base`, so the page stays offline."""
+    def to_data_uri(match):
+        font = base / match.group(1)
+        if not font.is_file():
+            raise DataError(f"theme font {font} not found (referenced by {match.group(0)}). Put the woff2 file there or remove the @font-face.")
+        return 'url("data:font/woff2;base64,%s")' % base64.b64encode(font.read_bytes()).decode("ascii")
+    return FONT_URL.sub(to_data_uri, css)
+
+
 def load_theme(name):
-    """CSS text for a theme: a path to a .css file, or the name of a file in themes/."""
+    """CSS text for a theme: a path to a .css file, or the name of a file in themes/. Its font files are inlined."""
     path = Path(name)
     if not path.is_file():
         path = THEMES / f"{name}.css"
     if not path.is_file():
         available = ", ".join(sorted(p.stem for p in THEMES.glob("*.css")))
         raise DataError(f"theme '{name}' not found. Available: {available}. Or pass the path to a .css file.")
-    return path.read_text(encoding="utf-8")
+    return inline_fonts(path.read_text(encoding="utf-8"), path.parent)
 
 
 def md_lite(text):

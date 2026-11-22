@@ -169,6 +169,29 @@ class RenderTests(FixtureCase):
         self.assertIn("--accent: #D97757", text)
         self.assertIn('data-set-lang="th"', text)
 
+    def test_theme_fonts_are_embedded_as_base64_with_no_network_font_urls(self):
+        text = self.build()
+        faces = re.findall(r"@font-face\s*\{[^}]*\}", text)
+        self.assertEqual(len(faces), 6)
+        for family in ("Source Serif 4", "Inter", "IBM Plex Sans Thai", "Noto Serif Thai"):
+            self.assertTrue(any(f'font-family: "{family}"' in f for f in faces), family)
+        for face in faces:
+            self.assertRegex(face, r'src:\s*url\("data:font/woff2;base64,[A-Za-z0-9+/=]{1000,}"\)')
+        self.assertNotRegex(text, r"url\(\s*[\"']?(?:https?:|//|fonts/)")
+
+    def test_missing_font_file_names_the_file(self):
+        css = self.tmp / "t.css"
+        css.write_text('@font-face { font-family: X; src: url("fonts/nope.woff2") format("woff2"); }', encoding="utf-8")
+        with self.assertRaisesRegex(sync.DataError, "nope.woff2"):
+            sync.load_theme(str(css))
+        self.assertNotEqual(run("render", str(self.dir), "--theme", str(css))[0], 0)
+
+    def test_page_renders_with_toggle_when_thai_is_missing(self):
+        (self.dir / "i18n" / "th.json").unlink()
+        text = self.build()
+        self.assertIn('data-set-lang="th"', text)
+        self.assertIn('data-l="en"', text)
+
     def test_all_sections_and_numbered_tab_bar_in_one_document(self):
         text = self.build()
         self.assertEqual(re.findall(r'<section class="tab-section[^"]*" id="view-(\w+)"', text), ["intent"] + [f"tab{n}" for n in range(1, 6)])
@@ -2005,6 +2028,72 @@ class BigProjectCheckTests(FixtureCase):
         self.dir = loose
         self.edit_uc("UC-01", lambda u: u["steps"][0].update(call="web/src/nope.ts:1"))
         self.assertFalse(self.found("callsite-missing"))
+
+
+class ProgressAndStepsTests(FixtureCase):
+    def write_progress(self, **data):
+        (self.dir / "progress.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_sample_progress_is_valid(self):
+        self.assertTrue((self.dir / "progress.json").is_file())
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("bad-progress", found)
+
+    def test_valid_progress_with_skipped_passes(self):
+        self.write_progress(mode="auto", approved=["intent", "tab1"], skipped=["tab3"])
+        code, found, out = self.codes()
+        self.assertEqual((code, "bad-progress" in found), (0, False), out)
+
+    def test_unknown_stage_name_is_an_error(self):
+        self.write_progress(mode="step", approved=["intent", "tab9"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("bad-progress", found)
+        self.assertIn("tab9", out)
+
+    def test_unknown_stage_in_skipped_and_bad_mode_are_errors(self):
+        self.write_progress(mode="review", approved=[], skipped=["thai"])
+        code, found, out = self.codes()
+        self.assertEqual(code, 1)
+        self.assertIn("'review'", out)
+        self.assertIn("'thai'", out)
+
+    def test_approved_must_be_a_list(self):
+        self.write_progress(mode="step", approved="intent")
+        self.assertEqual(self.codes()[0], 1)
+
+    def test_steps_missing_fires_for_code_and_mixed_but_not_draft(self):
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-02"])  # draft
+        self.assertNotIn("steps-missing", self.codes()[1])
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-01"])  # mixed
+        code, found, out = self.codes()
+        self.assertEqual(code, 0, "steps-missing is a warning")
+        self.assertIn("steps-missing", found)
+        self.assertIn("UC-01", out)
+        self.edit("usecases.json", lambda d: [u.pop("steps") for u in d["ucs"] if u["id"] == "UC-03"])  # code
+        self.assertEqual(self.codes()[2].count("steps-missing"), 2)
+
+    def test_steps_missing_also_fires_for_an_empty_list(self):
+        self.edit("usecases.json", lambda d: [u.update(steps=[]) for u in d["ucs"] if u["id"] == "UC-03"])
+        self.assertIn("steps-missing", self.codes()[1])
+
+
+class RunModeDocsTests(unittest.TestCase):
+    def setUp(self):
+        self.skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_skill_md_states_the_run_mode_rules(self):
+        for needle in ("step mode", "default", "STOP", "progress.json", '"auto"', '"just do it"', '"translate"', "no review mode"):
+            self.assertIn(needle, self.skill, needle)
+
+    def test_skill_md_stays_short(self):
+        self.assertLessEqual(len(self.skill.splitlines()), 90)
+
+    def test_docs_require_steps_for_code_and_mixed_ucs(self):
+        solution = (SKILL / "solution.md").read_text(encoding="utf-8")
+        self.assertIn("steps-missing", solution)
+        self.assertIn("required", solution)
 
 
 class TemplateHygieneTests(unittest.TestCase):

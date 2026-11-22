@@ -1,0 +1,9 @@
+# Theme fonts
+
+Subset woff2 files (Latin for Source Serif 4 and Inter, Thai for IBM Plex Sans Thai and Noto Serif Thai), all SIL OFL 1.1 (`OFL.txt`).
+They are a one-time dev artifact; `artifact_sync.py` only reads them (stdlib), never downloads or subsets.
+
+Rebuild: fetch the TTFs from `https://github.com/google/fonts/tree/main/ofl/<family>`, pin variable axes
+(`fontTools.varLib.instancer`: Source Serif 4 `opsz=20 wght=500:700`, Inter `opsz=14 wght=400:600`, Noto Serif Thai `wdth=100 wght=500:600`),
+then `fontTools.subset` with `flavor=woff2`, layout features kept, to Latin (U+0020-00FF, punctuation, arrows) or Thai (U+0E01-0E5B, ZWSP/ZWNJ/ZWJ, quotes, dotted circle).
+Needs `pip install fonttools brotli`.

@@ -396,9 +396,9 @@ class ReviewRegressionTests(FixtureCase):
         document = sync.Site(project, print_mode=True).print_document(sync.present_tabs(self.dir))
         self.assertEqual(re.findall(r"<details(?![^>]*\bopen\b)[^>]*>", document), [])
 
-    def test_f8_skill_commits_before_rendering(self):
-        steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 5. Publish loop")[1].split("## 6.")[0]
-        order = [steps.index(k) for k in ("artifact_sync.py render", "**Publish**", "`publish.<adapter>", "**ONE commit**")]
+    def test_stage_loop_order_is_validate_commit_render_publish(self):
+        steps = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("## 6. Stage loop")[1].split("## 7.")[0]
+        order = [steps.index(k) for k in ("artifact_sync.py validate", "**Commit**", "artifact_sync.py render", "**Publish**", "`publish.<adapter>")]
         self.assertEqual(order, sorted(order))
         self.assertNotIn("republish the others", steps)
 

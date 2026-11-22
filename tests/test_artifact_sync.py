@@ -396,9 +396,12 @@ class ExportLanguageTests(FixtureCase):
                 page = self.build_dir() / f"artifact-print-{lang}.html"
                 probed = self.build_dir() / f"probe-{lang}.html"
                 probed.write_text(page.read_text(encoding="utf-8").replace("</body>", probe + "</body>"), encoding="utf-8")
-                dom = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--dump-dom", probed.resolve().as_uri()],
-                                     capture_output=True, text=True, encoding="utf-8", timeout=120).stdout
-                pairs = json.loads(html.unescape(re.search(r'data-probe="([^"]*)"', dom).group(1)))
+                done = subprocess.run([sync.find_browser(), "--headless", "--disable-gpu", "--dump-dom", probed.resolve().as_uri()],
+                                      capture_output=True, text=True, encoding="utf-8", timeout=120)
+                self.assertEqual(done.returncode, 0, f"browser exited {done.returncode}: {done.stderr[-300:]}")
+                match = re.search(r'data-probe="([^"]*)"', done.stdout)
+                self.assertIsNotNone(match, f"data-probe missing from the dumped page: {done.stderr[-300:]}")
+                pairs = json.loads(html.unescape(match.group(1)))
                 self.assertTrue(pairs, "the Thai title span exists")
                 for thai_display, english_display in pairs:
                     self.assertEqual((thai_display, english_display), (shown, hidden))

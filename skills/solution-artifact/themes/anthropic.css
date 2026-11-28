@@ -1,5 +1,5 @@
-/* Fonts. `render --fonts google` keeps the first block (Google Fonts), `--fonts local` the second (woff2 files copied to build/fonts/).
-   Offline, blocked, or a lone index.html without fonts/: the system stacks in --font-* take over. Licenses: fonts/OFL.txt. */
+/* Fonts. `render --fonts google` keeps the first block (Google Fonts), `--fonts local` the second (woff2 files inlined into the page as data: URIs).
+   Offline or blocked (google mode): the system stacks in --font-* take over. Licenses: fonts/OFL.txt. */
 /* fonts:google */
 @import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@500;600&display=swap");
 /* /fonts:google */

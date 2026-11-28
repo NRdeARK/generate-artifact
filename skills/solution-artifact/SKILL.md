@@ -51,7 +51,7 @@ Build only the tabs the work needs (one stage each, in the order above). A tab w
 3. **Thai:** `python scripts/artifact_sync.py i18n-diff <dir>` lists new/stale strings as JSON; hand only those to a fast, cheap translator sub-agent (model per Runtime notes) that updates `i18n/th.json` as `{key: {"source_hash": <from diff>, "text": {path: thai}}}` (IDs, component names, code, paths stay English).
 4. `python scripts/artifact_sync.py validate <dir>`: fix every ERROR (exit 1, including `th-missing` and `th-stale`, which mean step 3 is incomplete). Warnings (such as missing diagram or `th-orphan`) are shown; fix or tell the user.
 5. **Commit** the stage data (English and Thai together); mention IDs like `UC-02` in the message so change tracks fill in. This commit is what the page footer shows.
-6. `python scripts/artifact_sync.py render <dir> [--theme anthropic] [--fonts local|google]` writes `<dir>/build/index.html` (`--fonts` is stated by the adapter file: `google` loads Google Fonts, `local` copies woff2 files to `build/fonts/`; `--theme` takes a name in `themes/` or a .css path).
+6. `python scripts/artifact_sync.py render <dir> [--theme anthropic] [--fonts local|google]` writes `<dir>/build/index.html` (`--fonts` is stated by the adapter file: `google` loads Google Fonts, `local` inlines the woff2 fonts into the one HTML file; `--theme` takes a name in `themes/` or a .css path).
 7. **Publish** with the adapter. Title is the project name.
 8. When `artifacts.json` changed (first publish: `adapter`, `publish.<adapter> = {id, url}`), commit it alone as `record publish <stage>`.
 9. Reply with the URL (or `local` path and `artifact_sync.py open`) in one line plus a short summary, then follow the run mode (stop in step mode). Do not paste page content.

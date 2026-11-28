@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import html
 import io
@@ -55,6 +56,23 @@ def all_pages(artifact_dir):
     """{tab: that tab's page} for every section present in build/index.html."""
     document = (Path(artifact_dir) / "build" / "index.html").read_text(encoding="utf-8")
     return {tab: tab_page(artifact_dir, tab) for tab in re.findall(r'<section class="tab-section[^"]*" id="view-(\w+)"', document)}
+
+
+def relative_refs(document):
+    """Every asset reference that needs a file beside the page: src/href in tags, CSS url() and @import."""
+    markup = re.sub(r"<script.*?</script>", "", document, flags=re.S)
+    tags = re.findall(r"""<[a-zA-Z][^<>]*?\s(?:src|href)\s*=\s*["']([^"']*)""", markup)
+    css = re.findall(r"""url\(\s*["']?([^"')\s]+)|@import\s+["']([^"']+)""", markup)
+    refs = tags + [a or b for a, b in css]
+    return [r for r in refs if not r.startswith(("#", "data:", "https://"))]
+
+
+def embedded_fonts(document):
+    """Bytes of every woff2 data URI in the page, in order."""
+    return [base64.b64decode(data) for data in re.findall(r'url\("data:font/woff2;base64,([A-Za-z0-9+/=]+)"\)', document)]
+
+
+THEME_FONTS = sorted(p.read_bytes() for p in (SKILL / "themes" / "fonts").glob("*.woff2"))
 
 
 def luminance(rgb):
@@ -177,9 +195,26 @@ class RenderTests(FixtureCase):
         self.assertEqual(code, 0)
         return (self.dir / "build" / "index.html").read_text(encoding="utf-8")
 
-    def test_local_render_writes_index_html_and_fonts_dir_only(self):
+    def test_local_render_writes_one_self_contained_file(self):
+        text = self.build("--fonts", "local")
+        self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["index.html"])
+        self.assertIn("data:font/woff2;base64,", text)
+        self.assertNotIn("url(fonts/", text)
+        self.assertNotIn('url("fonts/', text)
+        self.assertEqual(relative_refs(text), [])
+
+    def test_render_leaves_an_old_fonts_folder_alone(self):
+        old = self.dir / "build" / "fonts" / "old.woff2"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"old")
         self.build()
-        self.assertEqual(sorted(p.name for p in (self.dir / "build").iterdir()), ["fonts", "index.html"])
+        self.assertEqual([p.name for p in old.parent.iterdir()], ["old.woff2"])
+        self.assertEqual(old.read_bytes(), b"old")
+
+    def test_tab_sections_space_their_cards(self):
+        text = self.build()
+        self.assertIn(".tab-section.active { display: flex; flex-direction: column; gap: 16px; }", text)
+        self.assertIn(".tab-section:not(.active) { display: none; }", text)
 
     def test_google_render_writes_only_index_html(self):
         self.build("--fonts", "google")
@@ -207,21 +242,28 @@ class RenderTests(FixtureCase):
             self.assertIn(f"family={family}", refs[0])
         self.assertNotIn("@font-face", text)
 
-    def test_local_render_copies_fonts_matching_the_url_refs(self):
+    def test_local_render_embeds_every_theme_font(self):
         text = self.build()
-        refs = re.findall(r'url\("(fonts/[^"]+\.woff2)"\)', text)
-        self.assertEqual(len(refs), 6)
-        for ref in refs:
-            self.assertTrue((self.dir / "build" / ref).is_file(), ref)
+        self.assertEqual(sorted(embedded_fonts(text)), THEME_FONTS)
+        self.assertEqual(len(THEME_FONTS), 6)
         self.assertEqual(self.outside_refs(text), [])
-        self.assertEqual(sorted(p.name for p in (self.dir / "build" / "fonts").iterdir()), sorted(Path(r).name for r in refs))
 
-    def test_no_render_embeds_font_data_and_both_keep_system_fallbacks(self):
-        for extra in ((), ("--fonts", "google")):
+    def test_google_render_embeds_no_font_data_and_both_keep_system_fallbacks(self):
+        for extra, embeds in (((), True), (("--fonts", "google"), False)):
             text = self.build(*extra)
-            self.assertNotIn("data:font", text)
+            self.assertEqual("data:font" in text, embeds)
             self.assertRegex(text, r'--font-display:[^;]*"Leelawadee UI", Tahoma, Georgia')
             self.assertRegex(text, r'--font-body:[^;]*Tahoma, system-ui[^;]*"Segoe UI"')
+
+    def test_unmarked_local_font_in_a_custom_theme_is_embedded_in_both_modes(self):
+        theme = self.theme("@font-face { font-family: X; src: url(fonts/x.woff2); }")
+        (self.tmp / "t" / "fonts").mkdir()
+        (self.tmp / "t" / "fonts" / "x.woff2").write_bytes(b"woff2-bytes")
+        for mode in sync.FONT_MODES:
+            with self.subTest(mode=mode):
+                css = sync.load_theme(theme, mode)
+                self.assertIn(f"url(data:font/woff2;base64,{base64.b64encode(b'woff2-bytes').decode()})", css)
+                self.assertNotIn("fonts/x.woff2", css)
 
     def theme(self, css):
         theme = self.tmp / "t" / "theme.css"
@@ -408,16 +450,18 @@ class ExportLanguageTests(FixtureCase):
         self.assertTrue((self.build_dir() / "artifact-print-en.html").is_file())
         self.assertFalse((self.build_dir() / "artifact-print-th.html").exists())
 
-    def test_th_print_html_is_thai_active_and_loads_local_fonts(self):
+    def test_th_print_html_is_thai_active_and_embeds_local_fonts(self):
         self.assertEqual(run("export-pdf", str(self.dir), "--lang", "th", "--fonts", "local")[0], 0)
         document = (self.build_dir() / "artifact-print-th.html").read_text(encoding="utf-8")
+        self.assertFalse((self.build_dir() / "fonts").exists())
+        self.assertIn("data:font/woff2;base64,", document)
+        self.assertNotIn('url("fonts/', document)
+        self.assertEqual(sorted(embedded_fonts(document)), THEME_FONTS)
+        self.assertEqual(relative_refs(document), [])
         self.assertIn('<html lang="th"', document)
         self.assertRegex(document, "[ก-๛]{3}")
         th_title = json.loads((self.dir / "i18n" / "th.json").read_text(encoding="utf-8"))["D1"]["text"]["title"]
         self.assertIn(th_title, re.sub(r"<script.*?</script>", "", document, flags=re.S), "Thai is in the visible markup, not only embedded data")
-        self.assertIn('url("fonts/ibm-plex-sans-thai-400.woff2")', document)
-        for font in re.findall(r'url\("(fonts/[^"]+)"\)', document):
-            self.assertTrue((self.build_dir() / font).is_file(), font)
 
     @unittest.skipUnless(sync.find_browser(), "needs headless Edge/Chrome")
     def test_th_print_page_shows_thai_and_hides_english_in_a_real_browser(self):

@@ -30,6 +30,9 @@ a.tab:hover { background: var(--tab-hover-bg); }
 .tab.disabled .tab-num { background: none; border: 1px solid var(--border); }
 .tab-lock { flex: none; }
 .tab-section:not(.active) { display: none; }
+.tab-section.active { display: flex; flex-direction: column; gap: 16px; }
+.tab-section > p { margin: 0; } /* the gap spaces them */
+.tab-section > :empty { display: none; } /* an empty list must not add a second gap */
 .lang { display: flex; gap: 0; }
 .lang button { font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
 html[lang="en"] [data-set-lang="en"], html[lang="th"] [data-set-lang="th"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }

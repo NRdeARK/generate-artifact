@@ -11,6 +11,7 @@ Stdlib only. Never touches the network: publishing goes through an adapter
     artifact_sync.py i18n-diff  <artifact_dir>
 """
 import argparse
+import base64
 import hashlib
 import html
 import json
@@ -1064,10 +1065,10 @@ CSS_REF = re.compile(r"""url\(\s*["']?([^"')\s]+)["']?\s*\)|@import\s+["']([^"']
 REMOTE_FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 
 
-def theme_font_files(css, theme_dir):
-    """Check every url()/@import in a theme and return the local font files it uses.
+def check_theme_refs(css, theme_dir):
+    """Check every url()/@import in a theme.
     Allowed: fonts/<file>.woff2 that exists directly inside <theme_dir>/fonts, or an https Google Fonts URL. Anything else is an error."""
-    fonts_dir, files = (theme_dir / "fonts").resolve(), []
+    fonts_dir = (theme_dir / "fonts").resolve()
     for match in CSS_REF.finditer(css):
         ref = match.group(1) or match.group(2)
         if ref.startswith("https://") and urlparse(ref).hostname in REMOTE_FONT_HOSTS:
@@ -1078,14 +1079,23 @@ def theme_font_files(css, theme_dir):
                             f"or an https URL on {' / '.join(REMOTE_FONT_HOSTS)}.")
         if not target.is_file():
             raise DataError(f"theme font {target} not found (referenced as {ref!r}). Add the woff2 file or remove the @font-face.")
-        files.append(target)
-    return files
+
+
+def inline_fonts(css, theme_dir):
+    """Replace every local font reference with a data: URI, so the page needs no file beside it."""
+    def inline(match):
+        ref = match.group(1) or match.group(2)
+        if ref.startswith("https://"):
+            return match.group(0)
+        data = base64.b64encode((theme_dir / ref).read_bytes()).decode("ascii")
+        return match.group(0).replace(ref, f"data:font/woff2;base64,{data}")
+    return CSS_REF.sub(inline, css)
 
 
 def load_theme(name, fonts="local"):
-    """(css, font_files) for a theme: a path to a .css file, or the name of a file in themes/.
+    """CSS for a theme: a path to a .css file, or the name of a file in themes/.
     The theme keeps one `fonts:google` block (Google Fonts import) and one `fonts:local` block (@font-face on fonts/*.woff2);
-    only the block for `fonts` stays. font_files are the local files the page needs next to it (empty for google)."""
+    only the block for `fonts` stays, and any local font it refers to is inlined."""
     path = Path(name)
     if not path.is_file():
         path = THEMES / f"{name}.css"
@@ -1093,18 +1103,9 @@ def load_theme(name, fonts="local"):
         available = ", ".join(sorted(p.stem for p in THEMES.glob("*.css")))
         raise DataError(f"theme '{name}' not found. Available: {available}. Or pass the path to a .css file.")
     css = path.read_text(encoding="utf-8")
-    theme_font_files(css, path.parent)  # reject bad references whichever mode is used
+    check_theme_refs(css, path.parent)  # reject bad references whichever mode is used
     css = FONT_BLOCK.sub(lambda m: m.group(0) if m.group(1) == fonts else "", css)
-    return css, theme_font_files(css, path.parent)
-
-
-def copy_fonts(files, build_dir, dry_run=False):
-    """Put the theme's local font files in build/fonts/ so a relative url(fonts/x.woff2) resolves."""
-    for font in files:
-        log.info("%s %s", "would copy" if dry_run else "copy ", build_dir / "fonts" / font.name)
-        if not dry_run:
-            (build_dir / "fonts").mkdir(parents=True, exist_ok=True)
-            shutil.copy2(font, build_dir / "fonts" / font.name)
+    return inline_fonts(css, path.parent)
 
 
 def md_lite(text):
@@ -1142,7 +1143,7 @@ class Site:
         self.p = project
         self.print_mode = print_mode
         self.lang = lang
-        self.theme_css, self.font_files = load_theme(theme, fonts)
+        self.theme_css = load_theme(theme, fonts)
         self.ui_en = read_json(I18N / "en.json")
         self.ui_th = read_json(I18N / "th.json")
         try:
@@ -1690,7 +1691,6 @@ def cmd_render(args):
     else:
         target.parent.mkdir(exist_ok=True)
         target.write_text(page, encoding="utf-8")
-        copy_fonts(site.font_files, target.parent)
         log.info("wrote  %s (%d bytes, sections: %s)", target, size, ", ".join(site.present))
     summary.succeeded += 1
     summary.report("render")
@@ -1734,7 +1734,6 @@ def export_pdf_for(project, args, lang, summary):
         return True
     out_dir.mkdir(exist_ok=True)
     html_path.write_text(document, encoding="utf-8")
-    copy_fonts(site.font_files, out_dir)
     log.info("wrote  %s", html_path)
     summary.succeeded += 1
     browser = find_browser()
@@ -1802,7 +1801,7 @@ def build_parser():
             cmd.add_argument("--no-open", action="store_true", help="only print the URI; do not start a browser")
         if name in ("render", "export-pdf"):
             cmd.add_argument("--theme", default=DEFAULT_THEME, help="theme name in themes/ or path to a .css file (default anthropic)")
-            cmd.add_argument("--fonts", choices=FONT_MODES, default="local", help="local: copy woff2 files to build/fonts/ (default); google: load from Google Fonts (claude-ai adapter)")
+            cmd.add_argument("--fonts", choices=FONT_MODES, default="local", help="local: inline the woff2 fonts into the one HTML file (default); google: load from Google Fonts (claude-ai adapter)")
             cmd.add_argument("--dry-run", action="store_true", help="log what would be written; write nothing")
         if name == "export-pdf":
             cmd.add_argument("--lang", choices=("en", "th", "both"), default="en", help="PDF language: en (default), th, or both (two files, artifact-en.pdf and artifact-th.pdf)")

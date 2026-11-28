@@ -3,7 +3,7 @@
 No hosting. The rendered file stays on disk.
 
 - **Applies:** always available; the fallback of last resort.
-- **Render with:** `python scripts/artifact_sync.py render <dir> --fonts local` (the default). It copies the theme's `themes/fonts/*.woff2` to `build/fonts/` and the CSS refers to them as `url(fonts/<name>.woff2)`. Keep `build/fonts/` next to `index.html`; a lone `index.html` (e.g. emailed) falls back to system fonts.
+- **Render with:** `python scripts/artifact_sync.py render <dir> --fonts local` (the default). It inlines the theme's `themes/fonts/*.woff2` into the page as `data:` URIs, so `build/index.html` is the only file: copy, email or attach it on its own and it looks the same.
 - **Publish / update:** nothing to upload.
   - `id`: the relative path `build/index.html`.
   - `url`: the absolute `file://` URI of that file.

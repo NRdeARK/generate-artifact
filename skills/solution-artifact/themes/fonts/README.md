@@ -10,8 +10,8 @@ Needs `pip install fonttools brotli`.
 
 ## How the page uses them
 `themes/anthropic.css` has two marked blocks and `render --fonts <mode>` keeps one:
-- `google` (claude-ai adapter): `@import` of `fonts.googleapis.com`, same families and weights, nothing copied.
-- `local` (local adapter, default): `@font-face` rules with relative `url(fonts/<file>.woff2)`; render copies those files to `build/fonts/`.
+- `google` (claude-ai adapter): `@import` of `fonts.googleapis.com`, same families and weights, nothing embedded.
+- `local` (local adapter, default): `@font-face` rules with `url(fonts/<file>.woff2)`; render inlines each file into the one HTML file as a `data:font/woff2;base64,...` URI.
 
 Every `url(` / `@import` in a theme must be `fonts/<file>.woff2` directly inside this folder (it must exist) or an https `fonts.googleapis.com` / `fonts.gstatic.com` URL; anything else makes `render` fail.
-Fallbacks: offline or Google blocked, or an `index.html` copied without `fonts/`, show the system stacks (Georgia / Segoe UI; Leelawadee UI / Tahoma for Thai). No font data is embedded in the page.
+Fallbacks: in `google` mode, offline or Google blocked shows the system stacks (Georgia / Segoe UI; Leelawadee UI / Tahoma for Thai). `local` mode needs no network and no files beside the page.
